@@ -4,20 +4,19 @@ import { TitleBar } from "./TitleBar";
 import { ResizeHandles, ResizeEdge } from "./ResizeHandles";
 
 // ── App registry — lazy-load per appId ──────────────────────────────────────
-const TerminalApp = lazy(() =>
-  import("../apps/TerminalApp").then((m) => ({ default: m.TerminalApp }))
-);
+const TerminalApp  = lazy(() => import("../apps/TerminalApp").then((m)  => ({ default: m.TerminalApp  })));
+const SettingsApp  = lazy(() => import("../apps/SettingsApp").then((m)  => ({ default: m.SettingsApp  })));
 
 function AppContent({ appId }: { appId: string }): React.ReactElement {
+  const wrap = (node: React.ReactNode, label: string) => (
+    <Suspense fallback={<AppPlaceholder label={`Loading ${label}…`} />}>
+      {node}
+    </Suspense>
+  );
   switch (appId) {
-    case "terminal":
-      return (
-        <Suspense fallback={<AppPlaceholder label="Loading Terminal…" />}>
-          <TerminalApp />
-        </Suspense>
-      );
-    default:
-      return <AppPlaceholder label={appId} />;
+    case "terminal": return wrap(<TerminalApp />,  "Terminal");
+    case "settings": return wrap(<SettingsApp />,  "Settings");
+    default:         return <AppPlaceholder label={appId} />;
   }
 }
 

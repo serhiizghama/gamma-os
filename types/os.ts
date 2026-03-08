@@ -31,6 +31,12 @@ export interface Notification {
   read: boolean;
 }
 
+export interface UISettings {
+  theme: "dark" | "light";
+  bgBlur: number;   // px — blob filter blur (60–140)
+  bgSpeed: number;  // s  — base breath cycle duration (10–60)
+}
+
 export interface OSStore {
   windows: Record<string, WindowNode>;
   zIndexCounter: number;
@@ -39,6 +45,8 @@ export interface OSStore {
   launchpadOpen: boolean;
   notifications: Notification[];
   toastQueue: Notification[];
+
+  uiSettings: UISettings;
 
   openWindow: (appId: string, title: string) => void;
   closeWindow: (id: string) => void;
@@ -53,4 +61,7 @@ export interface OSStore {
 
   pushNotification: (n: Omit<Notification, "id" | "timestamp" | "read">) => void;
   dismissToast: (id: string) => void;
+
+  updateUISettings: (patch: Partial<UISettings>) => void;
+  resetAll: () => void;
 }

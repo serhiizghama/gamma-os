@@ -2,9 +2,15 @@ import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { v4 as uuid } from "uuid";
-import type { OSStore, Notification, WindowNode } from "../types/os";
+import type { OSStore, Notification, WindowNode, UISettings } from "../types/os";
 
 const INITIAL_Z = 100;
+
+const DEFAULT_UI_SETTINGS: UISettings = {
+  theme: "dark",
+  bgBlur: 100,
+  bgSpeed: 28,
+};
 
 function pickNextFocused(
   windows: Record<string, WindowNode>,
@@ -25,19 +31,15 @@ export const useOSStore = create<OSStore>()(
       launchpadOpen: false,
       notifications: [],
       toastQueue: [],
+      uiSettings: { ...DEFAULT_UI_SETTINGS },
 
       openWindow: (appId, title) =>
         set((state) => {
           const id = uuid();
           const z = state.zIndexCounter + 1;
           state.windows[id] = {
-            id,
-            appId,
-            title,
-            coordinates: {
-              x: 120 + Math.random() * 80,
-              y: 80 + Math.random() * 40,
-            },
+            id, appId, title,
+            coordinates: { x: 120 + Math.random() * 80, y: 80 + Math.random() * 40 },
             dimensions: { width: 800, height: 560 },
             zIndex: z,
             isMinimized: false,
@@ -51,18 +53,16 @@ export const useOSStore = create<OSStore>()(
       closeWindow: (id) =>
         set((state) => {
           delete state.windows[id];
-          if (state.focusedWindowId === id) {
+          if (state.focusedWindowId === id)
             state.focusedWindowId = pickNextFocused(state.windows, id);
-          }
         }),
 
       minimizeWindow: (id) =>
         set((state) => {
           if (!state.windows[id]) return;
           state.windows[id].isMinimized = true;
-          if (state.focusedWindowId === id) {
+          if (state.focusedWindowId === id)
             state.focusedWindowId = pickNextFocused(state.windows, id);
-          }
         }),
 
       focusWindow: (id) =>
@@ -81,48 +81,32 @@ export const useOSStore = create<OSStore>()(
           if (!w) return;
           if (w.isMaximized) {
             w.coordinates = w.prevCoordinates ?? w.coordinates;
-            w.dimensions = w.prevDimensions ?? w.dimensions;
+            w.dimensions  = w.prevDimensions  ?? w.dimensions;
             w.isMaximized = false;
           } else {
             w.prevCoordinates = { ...w.coordinates };
-            w.prevDimensions = { ...w.dimensions };
+            w.prevDimensions  = { ...w.dimensions };
             w.coordinates = { x: 0, y: 0 };
-            w.dimensions = {
-              width: window.innerWidth,
-              height: window.innerHeight,
-            };
+            w.dimensions  = { width: window.innerWidth, height: window.innerHeight };
             w.isMaximized = true;
           }
         }),
 
       updateWindowPosition: (id, coords) =>
-        set((state) => {
-          if (state.windows[id]) state.windows[id].coordinates = coords;
-        }),
+        set((state) => { if (state.windows[id]) state.windows[id].coordinates = coords; }),
 
       updateWindowDimensions: (id, dims) =>
-        set((state) => {
-          if (state.windows[id]) state.windows[id].dimensions = dims;
-        }),
+        set((state) => { if (state.windows[id]) state.windows[id].dimensions = dims; }),
 
       toggleLaunchpad: () =>
-        set((state) => {
-          state.launchpadOpen = !state.launchpadOpen;
-        }),
+        set((state) => { state.launchpadOpen = !state.launchpadOpen; }),
 
       closeLaunchpad: () =>
-        set((state) => {
-          state.launchpadOpen = false;
-        }),
+        set((state) => { state.launchpadOpen = false; }),
 
       pushNotification: (n) =>
         set((state) => {
-          const notif: Notification = {
-            ...n,
-            id: uuid(),
-            timestamp: Date.now(),
-            read: false,
-          };
+          const notif: Notification = { ...n, id: uuid(), timestamp: Date.now(), read: false };
           state.notifications.unshift(notif);
           state.toastQueue.push(notif);
         }),
@@ -131,15 +115,25 @@ export const useOSStore = create<OSStore>()(
         set((state) => {
           state.toastQueue = state.toastQueue.filter((t) => t.id !== id);
         }),
+
+      updateUISettings: (patch) =>
+        set((state) => {
+          Object.assign(state.uiSettings, patch);
+        }),
+
+      resetAll: () => {
+        localStorage.removeItem("gamma-os-session");
+        window.location.reload();
+      },
     })),
     {
       name: "gamma-os-session",
       storage: createJSONStorage(() => localStorage),
-      // ONLY persist window layout — never UI state or notification queues
       partialize: (state) => ({
         windows: state.windows,
         zIndexCounter: state.zIndexCounter,
         focusedWindowId: state.focusedWindowId,
+        uiSettings: state.uiSettings,
       }),
     }
   )
