@@ -18,10 +18,12 @@ function useFreshBootDefaults() {
   useEffect(() => {
     // persist middleware has already merged localStorage into the store
     // synchronously by this point — safe to read final hydrated state.
-    const { windows, openWindow } = useOSStore.getState();
+    const { openWindow } = useOSStore.getState();
 
-    if (Object.keys(windows).length === 0) {
-      // Fresh session — spawn default apps
+    // Spawn defaults only if there is NO existing session in localStorage.
+    // Empty windows after a session exists = user closed everything deliberately.
+    const hasSession = !!localStorage.getItem("gamma-os-session");
+    if (!hasSession) {
       openWindow("terminal", "Terminal");
       openWindow("browser",  "Browser");
     }

@@ -17,12 +17,15 @@ let mockIndex = 0;
  */
 export function useSystemEvents(): void {
   useEffect(() => {
+    // Mock SSE disabled — will be replaced with real EventSource in Phase 2.
+    // Uncomment the block below to re-enable fake notifications for testing.
+    /*
     const id = setInterval(() => {
       const payload = MOCK_EVENTS[mockIndex % MOCK_EVENTS.length];
       mockIndex += 1;
       useOSStore.getState().pushNotification(payload);
     }, 15_000);
-
     return () => clearInterval(id);
+    */
   }, []);
 }
