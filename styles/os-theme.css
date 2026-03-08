@@ -52,14 +52,27 @@
   to { opacity: 0; transform: scale(0.08) translate(var(--dock-target-x), var(--dock-target-y)); }
 }
 
-/* Window base styles */
+/* Window position shell — transform ONLY, no animation (animation would override translate) */
 .window {
   position: absolute;
-  width: var(--win-w);
-  height: var(--win-h);
+  width: var(--win-w, 800px);
+  height: var(--win-h, 560px);
   transform: translate(var(--win-x, 0px), var(--win-y, 0px));
-  will-change: transform, opacity;
+  will-change: transform;
+  top: 0;
+  left: 0;
+}
+
+/* Window visual frame — inner layer, gets the open animation */
+.window__frame {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--window-radius);
   animation: windowOpen var(--duration-normal) var(--spring-fast) forwards;
+  will-change: opacity, transform;
 }
 
 .window--minimized {

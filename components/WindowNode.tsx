@@ -1,6 +1,10 @@
 import React, { useRef, useCallback, useEffect } from "react";
 import { useOSStore } from "../store/useOSStore";
 import { TitleBar } from "./TitleBar";
+import { ResizeHandles, ResizeEdge } from "./ResizeHandles";
+
+const MIN_W = 320;
+const MIN_H = 200;
 
 interface WindowNodeProps {
   id: string;
@@ -11,13 +15,12 @@ export function WindowNode({ id }: WindowNodeProps): React.ReactElement | null {
   const isFocused = useOSStore((s) => s.focusedWindowId === id);
   const focusWindow = useOSStore((s) => s.focusWindow);
 
-  // Local ref for DOM node — CSS vars driven during motion
-  const nodeRef = useRef<HTMLDivElement>(null);
+  // Outer shell ref — only position/size CSS vars live here
+  const shellRef = useRef<HTMLDivElement>(null);
 
-  // Sync CSS vars from store on mount and when store coords/dims change
-  // (they only change on pointerup write-back — safe to sync here)
+  // Sync CSS vars from store (only after pointerup Zustand write)
   useEffect(() => {
-    const el = nodeRef.current;
+    const el = shellRef.current;
     if (!el || !win) return;
     el.style.setProperty("--win-x", `${win.coordinates.x}px`);
     el.style.setProperty("--win-y", `${win.coordinates.y}px`);
@@ -25,51 +28,41 @@ export function WindowNode({ id }: WindowNodeProps): React.ReactElement | null {
     el.style.setProperty("--win-h", `${win.dimensions.height}px`);
   }, [win?.coordinates.x, win?.coordinates.y, win?.dimensions.width, win?.dimensions.height]);
 
-  const handleTitleBarPointerDown = useCallback(
+  // ─── Drag ────────────────────────────────────────────────────────────────
+  const handleDragStart = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (e.button !== 0) return;
       e.preventDefault();
-
-      // Focus on drag start
       focusWindow(id);
 
-      const el = nodeRef.current;
+      const el = shellRef.current;
       if (!el) return;
 
-      // Capture current CSS var values as drag origin
-      const startX = e.clientX;
-      const startY = e.clientY;
+      const startClientX = e.clientX;
+      const startClientY = e.clientY;
       const initX = win?.coordinates.x ?? 0;
       const initY = win?.coordinates.y ?? 0;
 
       let currentX = initX;
       let currentY = initY;
-      let rafId: number | null = null;
+      let rafPending = false;
 
       const onMove = (ev: PointerEvent) => {
-        const dx = ev.clientX - startX;
-        const dy = ev.clientY - startY;
-        currentX = initX + dx;
-        currentY = initY + dy;
-
-        if (rafId !== null) return; // already scheduled
-        rafId = requestAnimationFrame(() => {
+        currentX = initX + (ev.clientX - startClientX);
+        currentY = initY + (ev.clientY - startClientY);
+        if (rafPending) return;
+        rafPending = true;
+        requestAnimationFrame(() => {
           el.style.setProperty("--win-x", `${currentX}px`);
           el.style.setProperty("--win-y", `${currentY}px`);
-          rafId = null;
+          rafPending = false;
         });
       };
 
       const onUp = () => {
-        if (rafId !== null) {
-          cancelAnimationFrame(rafId);
-          // Apply final position synchronously
-          el.style.setProperty("--win-x", `${currentX}px`);
-          el.style.setProperty("--win-y", `${currentY}px`);
-        }
         window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
-        // Single Zustand write
+        el.style.setProperty("--win-x", `${currentX}px`);
+        el.style.setProperty("--win-y", `${currentY}px`);
         useOSStore.getState().updateWindowPosition(id, { x: currentX, y: currentY });
       };
 
@@ -79,61 +72,148 @@ export function WindowNode({ id }: WindowNodeProps): React.ReactElement | null {
     [id, win?.coordinates.x, win?.coordinates.y, focusWindow]
   );
 
-  const handleWindowPointerDown = useCallback(() => {
+  // ─── Resize ──────────────────────────────────────────────────────────────
+  const onResizePointerDown = useCallback(
+    (edge: ResizeEdge) => (e: React.PointerEvent<HTMLDivElement>) => {
+      e.stopPropagation(); // prevent drag from firing
+      e.preventDefault();
+      focusWindow(id);
+
+      const el = shellRef.current;
+      if (!el || !win) return;
+
+      const startClientX = e.clientX;
+      const startClientY = e.clientY;
+      const initW = win.dimensions.width;
+      const initH = win.dimensions.height;
+      const initX = win.coordinates.x;
+      const initY = win.coordinates.y;
+
+      let curW = initW;
+      let curH = initH;
+      let curX = initX;
+      let curY = initY;
+      let rafPending = false;
+
+      const onMove = (ev: PointerEvent) => {
+        const dx = ev.clientX - startClientX;
+        const dy = ev.clientY - startClientY;
+
+        let newW = initW;
+        let newH = initH;
+        let newX = initX;
+        let newY = initY;
+
+        // East edge: widen rightward
+        if (edge.includes("e")) newW = Math.max(MIN_W, initW + dx);
+        // South edge: taller downward
+        if (edge.includes("s")) newH = Math.max(MIN_H, initH + dy);
+        // West edge: widen leftward, shift X
+        if (edge.includes("w")) {
+          newW = Math.max(MIN_W, initW - dx);
+          newX = initX + (initW - newW); // keep right edge fixed
+        }
+        // North edge: taller upward, shift Y
+        if (edge.includes("n")) {
+          newH = Math.max(MIN_H, initH - dy);
+          newY = initY + (initH - newH); // keep bottom edge fixed
+        }
+
+        curW = newW;
+        curH = newH;
+        curX = newX;
+        curY = newY;
+
+        if (rafPending) return;
+        rafPending = true;
+        requestAnimationFrame(() => {
+          el.style.setProperty("--win-w", `${curW}px`);
+          el.style.setProperty("--win-h", `${curH}px`);
+          el.style.setProperty("--win-x", `${curX}px`);
+          el.style.setProperty("--win-y", `${curY}px`);
+          rafPending = false;
+        });
+      };
+
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        // Flush final values to DOM
+        el.style.setProperty("--win-w", `${curW}px`);
+        el.style.setProperty("--win-h", `${curH}px`);
+        el.style.setProperty("--win-x", `${curX}px`);
+        el.style.setProperty("--win-y", `${curY}px`);
+        // Single Zustand write
+        useOSStore.getState().updateWindowDimensions(id, { width: curW, height: curH });
+        useOSStore.getState().updateWindowPosition(id, { x: curX, y: curY });
+      };
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp, { once: true });
+    },
+    [id, win?.dimensions.width, win?.dimensions.height, win?.coordinates.x, win?.coordinates.y, focusWindow]
+  );
+
+  // ─── Focus on click ──────────────────────────────────────────────────────
+  const handleShellPointerDown = useCallback(() => {
     if (!isFocused) focusWindow(id);
   }, [id, isFocused, focusWindow]);
 
   if (!win) return null;
 
   return (
+    // Outer shell: position only — NO animation (animation overrides transform)
     <div
-      ref={nodeRef}
-      className={`window${win.isMinimized ? " window--minimized" : ""}${isFocused ? " window--focused" : ""}`}
-      onPointerDown={handleWindowPointerDown}
+      ref={shellRef}
+      className={`window${win.isMinimized ? " window--minimized" : ""}`}
+      onPointerDown={handleShellPointerDown}
       style={{
-        // CSS vars set via useEffect and RAF — these are the initial values only
         "--win-x": `${win.coordinates.x}px`,
         "--win-y": `${win.coordinates.y}px`,
         "--win-w": `${win.dimensions.width}px`,
         "--win-h": `${win.dimensions.height}px`,
         zIndex: win.zIndex,
-        background: "var(--window-bg)",
-        backdropFilter: "var(--glass-blur)",
-        WebkitBackdropFilter: "var(--glass-blur)",
-        border: isFocused ? "1px solid rgba(255,255,255,0.12)" : "var(--window-border)",
-        borderRadius: "var(--window-radius)",
-        boxShadow: isFocused
-          ? "0 32px 80px rgba(0,0,0,0.72)"
-          : "var(--glass-shadow)",
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-        minWidth: "var(--window-min-width)",
-        minHeight: "var(--window-min-height)",
-        // Remove animation on minimized restore
-        animation: win.isMinimized ? "none" : undefined,
       } as React.CSSProperties}
     >
-      <TitleBar
-        windowId={id}
-        title={win.title}
-        onPointerDown={handleTitleBarPointerDown}
-      />
-
-      {/* AppContent placeholder — Iteration 4 */}
+      {/* Inner frame: visual styles + open animation */}
       <div
+        className="window__frame"
         style={{
-          flex: 1,
-          overflow: "auto",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: "var(--text-secondary)",
-          fontSize: 13,
-          fontFamily: "var(--font-system)",
-        }}
+          background: "var(--window-bg)",
+          backdropFilter: "var(--glass-blur)",
+          WebkitBackdropFilter: "var(--glass-blur)",
+          border: isFocused
+            ? "1px solid rgba(255,255,255,0.12)"
+            : "var(--window-border)",
+          boxShadow: isFocused
+            ? "0 32px 80px rgba(0,0,0,0.72)"
+            : "var(--glass-shadow)",
+          position: "relative", // so ResizeHandles can be absolute inside
+        } as React.CSSProperties}
       >
-        {win.appId}
+        <TitleBar
+          windowId={id}
+          title={win.title}
+          onDragStart={handleDragStart}
+        />
+
+        {/* AppContent placeholder — Iteration 4 */}
+        <div
+          style={{
+            flex: 1,
+            overflow: "auto",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "var(--text-secondary)",
+            fontSize: 13,
+            fontFamily: "var(--font-system)",
+          }}
+        >
+          {win.appId}
+        </div>
+
+        {/* 8-directional resize handles */}
+        <ResizeHandles onResizePointerDown={onResizePointerDown} />
       </div>
     </div>
   );

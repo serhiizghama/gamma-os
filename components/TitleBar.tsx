@@ -4,19 +4,17 @@ import { useOSStore } from "../store/useOSStore";
 interface TitleBarProps {
   windowId: string;
   title: string;
-  onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void;
+  onDragStart: (e: React.PointerEvent<HTMLDivElement>) => void;
 }
 
-export function TitleBar({ windowId, title, onPointerDown }: TitleBarProps): React.ReactElement {
+export function TitleBar({ windowId, title, onDragStart }: TitleBarProps): React.ReactElement {
   const closeWindow = useOSStore((s) => s.closeWindow);
   const minimizeWindow = useOSStore((s) => s.minimizeWindow);
   const maximizeWindow = useOSStore((s) => s.maximizeWindow);
 
-  const stopProp = (e: React.MouseEvent) => e.stopPropagation();
-
   return (
     <div
-      onPointerDown={onPointerDown}
+      onPointerDown={onDragStart}
       style={{
         height: "var(--window-titlebar-height)",
         display: "flex",
@@ -25,13 +23,15 @@ export function TitleBar({ windowId, title, onPointerDown }: TitleBarProps): Rea
         gap: 8,
         flexShrink: 0,
         cursor: "grab",
-        WebkitAppRegion: "drag",
         userSelect: "none",
         borderBottom: "1px solid var(--glass-border)",
-      } as React.CSSProperties}
+      }}
     >
-      {/* Traffic lights */}
-      <div style={{ display: "flex", gap: 6, flexShrink: 0 }} onMouseDown={stopProp}>
+      {/* Traffic lights — stop propagation so clicks don't start drag */}
+      <div
+        style={{ display: "flex", gap: 6, flexShrink: 0 }}
+        onPointerDown={(e) => e.stopPropagation()}
+      >
         <button
           onClick={(e) => { e.stopPropagation(); closeWindow(windowId); }}
           style={{
@@ -93,7 +93,7 @@ export function TitleBar({ windowId, title, onPointerDown }: TitleBarProps): Rea
         {title}
       </span>
 
-      {/* Spacer to balance traffic lights */}
+      {/* Balance spacer */}
       <div style={{ width: 42, flexShrink: 0 }} />
     </div>
   );

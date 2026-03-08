@@ -11,7 +11,7 @@ export function WindowManager(): React.ReactElement {
       style={{
         position: "absolute",
         inset: 0,
-        pointerEvents: "none",
+        pointerEvents: "auto",
         zIndex: 1,
       }}
     >
