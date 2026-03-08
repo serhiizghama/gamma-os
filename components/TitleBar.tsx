@@ -8,93 +8,36 @@ interface TitleBarProps {
 }
 
 export function TitleBar({ windowId, title, onDragStart }: TitleBarProps): React.ReactElement {
-  const closeWindow = useOSStore((s) => s.closeWindow);
+  const closeWindow    = useOSStore((s) => s.closeWindow);
   const minimizeWindow = useOSStore((s) => s.minimizeWindow);
   const maximizeWindow = useOSStore((s) => s.maximizeWindow);
 
   return (
-    <div
-      onPointerDown={onDragStart}
-      style={{
-        height: "var(--window-titlebar-height)",
-        display: "flex",
-        alignItems: "center",
-        padding: "0 12px",
-        gap: 8,
-        flexShrink: 0,
-        cursor: "grab",
-        userSelect: "none",
-        borderBottom: "1px solid var(--glass-border)",
-      }}
-    >
+    <div className="window-titlebar" onPointerDown={onDragStart}>
       {/* Traffic lights — stop propagation so clicks don't start drag */}
       <div
-        style={{ display: "flex", gap: 6, flexShrink: 0 }}
+        className="window-titlebar__lights"
         onPointerDown={(e) => e.stopPropagation()}
       >
         <button
+          className="btn-close"
           onClick={(e) => { e.stopPropagation(); closeWindow(windowId); }}
-          style={{
-            width: 12,
-            height: 12,
-            borderRadius: "50%",
-            background: "var(--btn-close)",
-            border: "none",
-            cursor: "pointer",
-            padding: 0,
-            flexShrink: 0,
-          }}
           aria-label="Close"
         />
         <button
+          className="btn-minimize"
           onClick={(e) => { e.stopPropagation(); minimizeWindow(windowId); }}
-          style={{
-            width: 12,
-            height: 12,
-            borderRadius: "50%",
-            background: "var(--btn-minimize)",
-            border: "none",
-            cursor: "pointer",
-            padding: 0,
-            flexShrink: 0,
-          }}
           aria-label="Minimize"
         />
         <button
+          className="btn-maximize"
           onClick={(e) => { e.stopPropagation(); maximizeWindow(windowId); }}
-          style={{
-            width: 12,
-            height: 12,
-            borderRadius: "50%",
-            background: "var(--btn-maximize)",
-            border: "none",
-            cursor: "pointer",
-            padding: 0,
-            flexShrink: 0,
-          }}
           aria-label="Maximize"
         />
       </div>
 
-      {/* Title */}
-      <span
-        style={{
-          flex: 1,
-          textAlign: "center",
-          fontSize: 13,
-          fontWeight: 500,
-          color: "var(--text-secondary)",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-          pointerEvents: "none",
-        }}
-      >
-        {title}
-      </span>
-
-      {/* Balance spacer */}
-      <div style={{ width: 42, flexShrink: 0 }} />
+      <span className="window-titlebar__title">{title}</span>
+      <div className="window-titlebar__spacer" />
     </div>
   );
 }

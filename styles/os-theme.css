@@ -80,6 +80,127 @@
   pointer-events: none;
 }
 
+/* ── Window TitleBar & Traffic Lights ───────────────────────── */
+.window-titlebar {
+  height: var(--window-titlebar-height);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 8px;
+  flex-shrink: 0;
+  cursor: grab;
+  user-select: none;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.window-titlebar__lights {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* ── Traffic light base ── */
+.btn-close,
+.btn-minimize,
+.btn-maximize {
+  position: relative;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-close    { background: var(--btn-close); }
+.btn-minimize { background: var(--btn-minimize); }
+.btn-maximize { background: var(--btn-maximize); }
+
+/* ── Symbol pseudo-elements (hidden by default) ── */
+.btn-close::after,
+.btn-minimize::after,
+.btn-maximize::after {
+  content: '';
+  position: absolute;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-smooth);
+  pointer-events: none;
+}
+
+/* × — two rotated bars via background gradients */
+.btn-close::after {
+  width: 6px;
+  height: 6px;
+  background:
+    linear-gradient(
+      45deg,
+      transparent calc(50% - 0.5px),
+      rgba(0,0,0,0.65) calc(50% - 0.5px),
+      rgba(0,0,0,0.65) calc(50% + 0.5px),
+      transparent calc(50% + 0.5px)
+    ),
+    linear-gradient(
+      -45deg,
+      transparent calc(50% - 0.5px),
+      rgba(0,0,0,0.65) calc(50% - 0.5px),
+      rgba(0,0,0,0.65) calc(50% + 0.5px),
+      transparent calc(50% + 0.5px)
+    );
+}
+
+/* – — single horizontal bar */
+.btn-minimize::after {
+  width: 6px;
+  height: 1px;
+  background: rgba(0,0,0,0.55);
+  border-radius: 1px;
+}
+
+/* ↔ — two inward-pointing triangles (expand arrows) via clip-path on ::after + ::before */
+/* Using a ⤢ shape: top-left corner + bottom-right corner lines */
+.btn-maximize::after {
+  width: 5px;
+  height: 5px;
+  border: 1px solid rgba(0,0,0,0.6);
+  border-radius: 1px;
+  background: transparent;
+  transform: rotate(45deg) scale(0.85);
+}
+
+/* ── Reveal all symbols on titlebar hover ── */
+.window-titlebar:hover .btn-close::after,
+.window-titlebar:hover .btn-minimize::after,
+.window-titlebar:hover .btn-maximize::after {
+  opacity: 1;
+}
+
+/* ── Subtle brightness on individual button hover ── */
+.btn-close:hover    { filter: brightness(0.88); }
+.btn-minimize:hover { filter: brightness(0.88); }
+.btn-maximize:hover { filter: brightness(0.88); }
+
+.window-titlebar__title {
+  flex: 1;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  font-family: var(--font-system);
+}
+
+.window-titlebar__spacer {
+  width: 42px;
+  flex-shrink: 0;
+}
+
 /* ── Toast Notifications ─────────────────────────────────────── */
 @keyframes toastSlideIn {
   from { opacity: 0; transform: translateX(calc(100% + 20px)); }
