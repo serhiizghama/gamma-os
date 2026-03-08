@@ -32,26 +32,28 @@
                             │ REST /api/v1/apps
 ┌───────────────────────────▼─────────────────────────────┐
 │                    Node.js Backend                        │
-│  Express / Fastify + Redis Pub/Sub + Redis ZSET          │
+│  Express / Fastify + Redis Streams                       │
 └──────────────┬──────────────────────────────────────────┘
                │
 ┌──────────────▼──────────────────────────────────────────┐
 │                       Redis                              │
-│  Pub/Sub channel: gamma:system:events                    │
-│  ZSET key:        gamma:events:log  (score = event id)   │
+│  Stream key: gamma:system:events                         │
+│  XADD → auto-ID, XREAD → fan-out, MAXLEN → auto-prune   │
 └─────────────────────────────────────────────────────────┘
 ```
 
 ### Phase 1 User Interaction Flow
 
-1. **Boot** → `<GammaOS />` mounts, Zustand store initializes, SSE connection opens to `/api/v1/system/events` with `Last-Event-ID` header
+1. **Boot** → `<GammaOS />` mounts, Zustand store initializes, SSE connection opens with `Last-Event-ID` header
 2. **Desktop renders** → wallpaper visible, Dock anchored bottom, `<Launchpad />` mounted but `visibility: hidden`
-3. **User clicks "Apps" in Dock** → Zustand `ui.launchpadOpen = true` → desktop dims with `backdrop-filter: blur(20px)`, Launchpad grid fades in
-4. **User clicks app icon** → `openWindow(appId)` dispatched → new `WindowNode` added to store, `focusedWindowId` set to new id
-5. **User drags window** → `pointermove` updates DOM via local Ref + RAF (no Zustand calls). On `pointerup` → single `updateWindowPosition` to persist coordinates
-6. **User minimizes window** → `minimizeWindow(id)` → `isMinimized: true`, component stays mounted, CSS `visibility: hidden`
-7. **SSE event arrives** → Redis Pub/Sub delivers to all backend instances → client receives toast → click calls `focusWindow(id)`
-8. **Window crashes** → `ErrorBoundary` catches, renders fallback, OS kernel alive
+3. **User clicks "Apps"** → `launchpadOpen = true` → desktop dims, Launchpad grid fades in
+4. **User clicks app icon** → `openWindow(appId)` → `WindowNode` added, `focusedWindowId` set
+5. **User drags TitleBar** → `pointermove` → local Ref + RAF (no Zustand). On `pointerup` → single `updateWindowPosition`
+6. **User resizes window** → drag resize handle → local Ref + RAF updates CSS vars. On `pointerup` → single `updateWindowDimensions`
+7. **User minimizes** → `isMinimized: true`, component stays mounted, `visibility: hidden`
+8. **SSE event** → Redis Stream → Node.js → client toast → click → `focusWindow(id)`
+9. **Window closes** → app component `useEffect` cleanup fires → WebSocket closed, intervals cleared, WebGL destroyed → `delete state.windows[id]`
+10. **Window crashes** → `ErrorBoundary` catches, fallback renders, OS kernel alive
 
 ---
 
@@ -72,6 +74,8 @@
   --window-titlebar-height: 28px;
   --window-radius: 12px;
   --window-border: 1px solid rgba(255, 255, 255, 0.06);
+  --window-min-width: 320px;
+  --window-min-height: 200px;
 
   /* Dock */
   --dock-bg: rgba(255, 255, 255, 0.12);
@@ -106,7 +110,7 @@
 
 ### Animation Strategy (Zero Layout Thrashing)
 
-**Rule:** Never animate `width`, `height`, `top`, `left`. Only animate `transform` and `opacity` — GPU-composited, zero reflow.
+**Rule:** Only animate `transform` and `opacity`. Never `width`, `height`, `top`, `left`.
 
 ```css
 @keyframes windowOpen {
@@ -118,14 +122,12 @@
   to { opacity: 0; transform: scale(0.08) translate(var(--dock-target-x), var(--dock-target-y)); }
 }
 
-@keyframes launchpadIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-
 .window {
-  will-change: transform, opacity;
+  position: absolute;
+  width: var(--win-w);
+  height: var(--win-h);
   transform: translate(var(--win-x, 0px), var(--win-y, 0px));
+  will-change: transform, opacity;
   animation: windowOpen var(--duration-normal) var(--spring-fast) forwards;
 }
 
@@ -140,106 +142,72 @@
 }
 ```
 
-### [FIX #2] Drag & Drop — Strict Two-Phase Architecture
-
-**Dragging is a purely local DOM operation. Zustand is NOT involved during drag.**
+### Drag & Drop — Two-Phase (No Zustand during motion)
 
 ```
-pointermove → RAF → el.style.setProperty('--win-x', x) → GPU composite
-                                    ↑
-                         NO React re-renders
-                         NO Zustand calls
-                         NO setState
-
-pointerup → updateWindowPosition(id, { x, y })  ← SINGLE Zustand call to persist
+pointermove → RAF → el.style.setProperty('--win-x', x)  ← 0 React re-renders
+pointerup   → updateWindowPosition(id, {x, y})           ← 1 Zustand write
 ```
 
-Implementation in `<WindowNode />`:
+### Window Resize — Two-Phase (Same pattern as drag)
 
-```typescript
-const dragRef = useRef<{ startX: number; startY: number; initX: number; initY: number } | null>(null);
-const nodeRef = useRef<HTMLDivElement>(null);
-
-const onPointerDown = (e: React.PointerEvent) => {
-  const w = windows[id];
-  dragRef.current = {
-    startX: e.clientX,
-    startY: e.clientY,
-    initX: w.coordinates.x,
-    initY: w.coordinates.y,
-  };
-  window.addEventListener('pointermove', onPointerMove);
-  window.addEventListener('pointerup', onPointerUp, { once: true });
-};
-
-const onPointerMove = (e: PointerEvent) => {
-  if (!dragRef.current || !nodeRef.current) return;
-  const dx = e.clientX - dragRef.current.startX;
-  const dy = e.clientY - dragRef.current.startY;
-  const x = dragRef.current.initX + dx;
-  const y = dragRef.current.initY + dy;
-
-  // DOM-only update — zero React involvement
-  requestAnimationFrame(() => {
-    nodeRef.current!.style.setProperty('--win-x', `${x}px`);
-    nodeRef.current!.style.setProperty('--win-y', `${y}px`);
-  });
-};
-
-const onPointerUp = (e: PointerEvent) => {
-  if (!dragRef.current) return;
-  window.removeEventListener('pointermove', onPointerMove);
-  const dx = e.clientX - dragRef.current.startX;
-  const dy = e.clientY - dragRef.current.startY;
-
-  // Single Zustand write to persist final position
-  updateWindowPosition(id, {
-    x: dragRef.current.initX + dx,
-    y: dragRef.current.initY + dy,
-  });
-  dragRef.current = null;
-};
 ```
-
-This guarantees 60fps dragging regardless of window count. React reconciler is never invoked during drag.
+pointermove → RAF → el.style.setProperty('--win-w', w)  ← 0 React re-renders
+                    el.style.setProperty('--win-h', h)
+pointerup   → updateWindowDimensions(id, {width, height}) ← 1 Zustand write
+```
 
 ---
 
 ## 3. React Component Architecture
 
 ```
-<GammaOS />                          # Root kernel. SSE hook. OS-level ErrorBoundary.
-├── <Desktop />                      # Wallpaper. Launchpad blur class.
-├── <Launchpad />                    # Always mounted. visibility toggled.
-│   └── <AppIcon /> × N             # onClick → openWindow(appId)
-├── <WindowManager />                # Maps store.windows → WindowNode. Pure renderer.
-│   └── <ErrorBoundary key={id}>    # Per-window. Resets on re-open via key change.
-│       └── <WindowNode id={id} />  # Drag via local ref. Focus via selector.
-│           ├── <TitleBar />        # Traffic lights. Drag handle (onPointerDown).
-│           └── <AppContent />      # Dynamic import by appId.
-├── <Dock />                         # Fixed bottom. Icons + minimized slots.
+<GammaOS />                              # Root kernel. SSE hook. OS-level ErrorBoundary.
+├── <Desktop />                          # Wallpaper. Launchpad blur class.
+├── <Launchpad />                        # Always mounted. visibility toggled.
+│   └── <AppIcon /> × N                 # onClick → openWindow(appId)
+├── <WindowManager />                    # Maps store.windows → WindowNode. Pure renderer.
+│   └── <ErrorBoundary key={id}>        # Per-window. Resets on re-open via key.
+│       └── <WindowNode id={id} />      # Drag, resize, focus. CSS vars via local Ref.
+│           ├── <TitleBar />            # Traffic lights. Drag handle (onPointerDown).
+│           ├── <AppContent appId />    # Dynamic import. MUST implement cleanup contract.
+│           └── <ResizeHandles />       # 8 handles (N/S/E/W + corners). Each onPointerDown.
+├── <Dock />                             # Fixed bottom. Icons + minimized slots.
 │   ├── <DockIcon appId />
-│   └── <DockMinimizedSlot id />    # onClick → focusWindow(id)
-└── <NotificationCenter />           # SSE toast queue.
+│   └── <DockMinimizedSlot id />        # onClick → focusWindow(id)
+└── <NotificationCenter />               # SSE toast queue.
     └── <ToastNotification />
 ```
 
-**Focus detection per window — zero N re-renders:**
+### Single Responsibility
+
+| Component | Responsibility |
+|---|---|
+| `<GammaOS />` | SSE init, global keyboard shortcuts (Esc), OS-level ErrorBoundary |
+| `<Desktop />` | Wallpaper render, launchpad overlay class |
+| `<Launchpad />` | App grid, visibility toggle, outside-click dismiss |
+| `<WindowManager />` | Map store.windows → components, nothing else |
+| `<ErrorBoundary />` | Catch render errors, render fallback |
+| `<WindowNode />` | Drag + resize via local refs, click-to-focus |
+| `<TitleBar />` | Traffic light buttons, drag initiation |
+| `<ResizeHandles />` | 8 resize handles, resize initiation |
+| `<AppContent />` | Dynamic app import, **owns cleanup contract** |
+| `<Dock />` | Icon rendering, magnification, minimized slots |
+| `<NotificationCenter />` | SSE event → toast queue |
+
+### Focus detection — zero N re-renders
+
 ```typescript
 // Inside <WindowNode id={id} />
-// Only THIS component re-renders when focus changes — not all windows
 const isFocused = useOSStore(s => s.focusedWindowId === id);
+// Re-renders ONLY when this specific window's focus changes
 ```
 
 ---
 
-## 4. Global State Management (Zustand & TypeScript) — REVISED
+## 4. Global State Management (Zustand & TypeScript)
 
-### [FIX #1] WindowNode Interface — `isFocused` Removed
-
-**Problem:** Storing `isFocused` inside each `WindowNode` meant `focusWindow` had to iterate all windows (`O(N)` mutations), causing React to re-render every mounted `<WindowNode />` on every focus change.
-
-**Solution:** `focusedWindowId` is a scalar at the store root. Only the two affected windows re-render (the previously focused, now unfocused — and the newly focused one) via Zustand's equality selector.
+### TypeScript Interfaces
 
 ```typescript
 // types/os.ts
@@ -263,7 +231,7 @@ export interface WindowNode {
   zIndex: number;
   isMinimized: boolean;
   isMaximized: boolean;
-  // ❌ REMOVED: isFocused — was causing O(N) re-renders
+  // ❌ NO isFocused here — was causing O(N) re-renders
   prevCoordinates?: WindowCoordinates;
   prevDimensions?: WindowDimensions;
   openedAt: number;
@@ -279,38 +247,31 @@ export interface Notification {
 }
 
 export interface OSStore {
-  // Window state
   windows: Record<string, WindowNode>;
   zIndexCounter: number;
   focusedWindowId: string | null;   // ✅ scalar — O(1) focus, O(1) re-render
 
-  // UI state
   launchpadOpen: boolean;
-
-  // Notification state
   notifications: Notification[];
   toastQueue: Notification[];
 
-  // Window actions
   openWindow: (appId: string, title: string) => void;
   closeWindow: (id: string) => void;
   minimizeWindow: (id: string) => void;
   focusWindow: (id: string) => void;
   maximizeWindow: (id: string) => void;
-  updateWindowPosition: (id: string, coords: WindowCoordinates) => void;
-  updateWindowDimensions: (id: string, dims: WindowDimensions) => void;
+  updateWindowPosition: (id: string, coords: WindowCoordinates) => void;  // pointerup only
+  updateWindowDimensions: (id: string, dims: WindowDimensions) => void;   // pointerup only
 
-  // UI actions
   toggleLaunchpad: () => void;
   closeLaunchpad: () => void;
 
-  // Notification actions
   pushNotification: (n: Omit<Notification, 'id' | 'timestamp' | 'read'>) => void;
   dismissToast: (id: string) => void;
 }
 ```
 
-### Zustand Store — Revised Implementation
+### Zustand Store
 
 ```typescript
 // store/useOSStore.ts
@@ -324,7 +285,7 @@ export const useOSStore = create<OSStore>()(
   immer((set) => ({
     windows: {},
     zIndexCounter: INITIAL_Z,
-    focusedWindowId: null,          // ✅ scalar, not per-window boolean
+    focusedWindowId: null,
     launchpadOpen: false,
     notifications: [],
     toastQueue: [],
@@ -332,7 +293,6 @@ export const useOSStore = create<OSStore>()(
     openWindow: (appId, title) => set(state => {
       const id = uuid();
       const z = state.zIndexCounter + 1;
-      // ✅ No forEach mutation — only two state writes: new window + focusedWindowId
       state.windows[id] = {
         id, appId, title,
         coordinates: { x: 120 + Math.random() * 80, y: 80 + Math.random() * 40 },
@@ -343,13 +303,12 @@ export const useOSStore = create<OSStore>()(
         openedAt: Date.now(),
       };
       state.zIndexCounter = z;
-      state.focusedWindowId = id;   // ✅ O(1), triggers re-render only in selector consumers
+      state.focusedWindowId = id;
     }),
 
     closeWindow: (id) => set(state => {
       delete state.windows[id];
       if (state.focusedWindowId === id) {
-        // Focus most recently opened remaining window
         const remaining = Object.values(state.windows)
           .filter(w => !w.isMinimized)
           .sort((a, b) => b.zIndex - a.zIndex);
@@ -374,7 +333,7 @@ export const useOSStore = create<OSStore>()(
       state.windows[id].isMinimized = false;
       state.windows[id].zIndex = z;
       state.zIndexCounter = z;
-      state.focusedWindowId = id;   // ✅ single scalar write
+      state.focusedWindowId = id;
     }),
 
     maximizeWindow: (id) => set(state => {
@@ -393,11 +352,12 @@ export const useOSStore = create<OSStore>()(
       }
     }),
 
-    // ⚠️ Called ONLY on pointerup (drag end) — never on pointermove
+    // ⚠️ ONLY called on pointerup — never on pointermove
     updateWindowPosition: (id, coords) => set(state => {
       if (state.windows[id]) state.windows[id].coordinates = coords;
     }),
 
+    // ⚠️ ONLY called on pointerup — never on pointermove
     updateWindowDimensions: (id, dims) => set(state => {
       if (state.windows[id]) state.windows[id].dimensions = dims;
     }),
@@ -418,19 +378,72 @@ export const useOSStore = create<OSStore>()(
 );
 ```
 
-### Z-Index Strategy
+### Window Resize Implementation
 
-Monotonically incrementing counter. Each `focusWindow` / `openWindow` increments by 1 and assigns to the target window only. **O(1) — no sorting, no array scans.**
+```typescript
+// Inside <ResizeHandles /> — same two-phase pattern as drag
+type ResizeEdge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+
+const onResizePointerDown = (edge: ResizeEdge) => (e: React.PointerEvent) => {
+  e.stopPropagation(); // prevent drag from firing
+  const w = windows[id];
+  const initW = w.dimensions.width;
+  const initH = w.dimensions.height;
+  const initX = w.coordinates.x;
+  const initY = w.coordinates.y;
+  const startX = e.clientX;
+  const startY = e.clientY;
+
+  const onMove = (ev: PointerEvent) => {
+    const dx = ev.clientX - startX;
+    const dy = ev.clientY - startY;
+
+    let newW = initW, newH = initH, newX = initX, newY = initY;
+
+    if (edge.includes('e')) newW = Math.max(320, initW + dx);
+    if (edge.includes('s')) newH = Math.max(200, initH + dy);
+    if (edge.includes('w')) { newW = Math.max(320, initW - dx); newX = initX + (initW - newW); }
+    if (edge.includes('n')) { newH = Math.max(200, initH - dy); newY = initY + (initH - newH); }
+
+    // DOM-only during resize — zero React
+    requestAnimationFrame(() => {
+      nodeRef.current!.style.setProperty('--win-w', `${newW}px`);
+      nodeRef.current!.style.setProperty('--win-h', `${newH}px`);
+      nodeRef.current!.style.setProperty('--win-x', `${newX}px`);
+      nodeRef.current!.style.setProperty('--win-y', `${newY}px`);
+    });
+  };
+
+  const onUp = (ev: PointerEvent) => {
+    window.removeEventListener('pointermove', onMove);
+    const dx = ev.clientX - startX;
+    const dy = ev.clientY - startY;
+    // Single Zustand write to persist
+    let newW = initW, newH = initH, newX = initX, newY = initY;
+    if (edge.includes('e')) newW = Math.max(320, initW + dx);
+    if (edge.includes('s')) newH = Math.max(200, initH + dy);
+    if (edge.includes('w')) { newW = Math.max(320, initW - dx); newX = initX + (initW - newW); }
+    if (edge.includes('n')) { newH = Math.max(200, initH - dy); newY = initY + (initH - newH); }
+    updateWindowDimensions(id, { width: newW, height: newH });
+    updateWindowPosition(id, { x: newX, y: newY });
+  };
+
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp, { once: true });
+};
+```
 
 ### Re-render Guarantee
 
 | Action | Windows that re-render |
 |---|---|
-| `openWindow` | 1 (new window) + scalar `focusedWindowId` consumers |
-| `focusWindow(id)` | 1 (focused window's `zIndex`) + `focusedWindowId` consumers |
-| `pointermove` (drag) | 0 — DOM only via RAF |
-| `pointerup` (drag end) | 1 (coordinates update) |
-| `pushNotification` | 0 windows — NotificationCenter only |
+| `openWindow` | 1 new window |
+| `focusWindow(id)` | 1 (zIndex) |
+| `pointermove` drag | 0 — DOM only |
+| `pointerup` drag | 1 (coordinates) |
+| `pointermove` resize | 0 — DOM only |
+| `pointerup` resize | 1 (dimensions) |
+| `pushNotification` | 0 windows |
 
 ---
 
@@ -472,155 +485,188 @@ export class WindowErrorBoundary extends Component<Props, State> {
 }
 ```
 
-`key={windowId}` on ErrorBoundary — automatic reset on window re-open.
-
 ### Minimized Window Lifecycle
 
 ```
 OPEN      → mounted, visible,  pointer-events: auto
 MINIMIZED → mounted, hidden,   pointer-events: none   (visibility: hidden)
-CLOSED    → unmounted, removed from store
+CLOSED    → cleanup fires → unmounted → removed from store
 ```
 
-`visibility: hidden` keeps WebSocket, WebGL context, and component state alive. `display: none` would destroy them.
+### [FIX #2] App Cleanup Contract — Mandatory
+
+**Every `<AppContent />` component MUST implement cleanup on unmount.** This is a hard architectural rule, not optional.
+
+When `closeWindow(id)` fires:
+1. Zustand removes window from store
+2. React unmounts `<WindowNode />` → `<AppContent />`
+3. `useEffect` cleanup fires — **this is the only guarantee against zombie processes**
+
+Without explicit cleanup: WebSocket stays open, `setInterval` keeps firing, WebGL context stays allocated. These are invisible memory leaks.
+
+**Mandatory pattern for every app component:**
+
+```typescript
+// Every app component MUST follow this pattern
+export function AgentMonitorApp() {
+  const wsRef = useRef<WebSocket | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const glRef = useRef<WebGLRenderingContext | null>(null);
+
+  useEffect(() => {
+    // Init connections
+    wsRef.current = new WebSocket('wss://...');
+    intervalRef.current = setInterval(tick, 1000);
+
+    // ✅ MANDATORY cleanup — fires on closeWindow → unmount
+    return () => {
+      wsRef.current?.close();
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      // WebGL context: lose it explicitly to free GPU memory
+      glRef.current?.getExtension('WEBGL_lose_context')?.loseContext();
+    };
+  }, []);
+}
+```
+
+**Enforcement:** Code review gate — PRs adding new app components must include cleanup block or be rejected.
+
+### [NOTE] Security & Sandboxing Roadmap
+
+**Phase 1 (current):** All apps run in the same JS thread as the OS kernel. Acceptable because all app code is first-party and trusted. Apps have access to `window` and `useOSStore.getState()` — this is a known tradeoff.
+
+**Phase 2 (future — third-party or autonomous AI agents):** Must migrate to isolated execution:
+
+```
+Option A: <iframe sandbox="allow-scripts allow-same-origin">
+  - Full DOM isolation
+  - Communication via postMessage with typed message schema
+  - OS kernel is not reachable from iframe context
+
+Option B: Web Workers
+  - No DOM access (safe for logic-only agents)
+  - OffscreenCanvas for WebGL rendering
+  - postMessage for bidirectional communication
+  - Shared state via SharedArrayBuffer (requires COOP/COEP headers)
+```
+
+This is a Phase 2 concern. Phase 1 implementation proceeds with same-thread execution.
 
 ---
 
-## 6. Backend Contracts — REVISED (Redis-backed SSE)
+## 6. Backend Contracts — Redis Streams
 
-### [FIX #3] Anti-Pattern Eliminated: In-Memory → Redis
+### [FIX #3] Redis Streams Replace ZSET + Pub/Sub
 
-**Problem:** `const eventLog: SSEEvent[] = []` in a single Node.js process:
-- Destroyed on process restart
-- Not shared across cluster instances (PM2 cluster, Kubernetes pods)
-- Memory leak without TTL enforcement
+**Previous pattern (eliminated):**
+- `ZSET` for event log + manual `ZREMRANGEBYSCORE` on every write → O(log N) write + cleanup overhead at high RPS
+- `Pub/Sub` for fan-out → no persistence, message lost if subscriber not connected at publish time
 
-**Solution:** Redis as the shared event bus and persistent event log.
-
-```
-Node Instance A ──┐
-Node Instance B ──┼──► Redis Pub/Sub (gamma:system:events)
-Node Instance C ──┘         │
-                            │ publish
-                            ▼
-                    All subscribers receive event
-                    All active SSE clients notified
-                            │
-                    Redis ZSET (gamma:events:log)
-                    score = eventId, TTL = 24h
-                    Supports Last-Event-ID replay
-                    across restarts and instances
-```
-
-### Redis Data Structures
+**Redis Streams — designed exactly for this:**
+- `XADD gamma:system:events MAXLEN ~ 10000 * field value` — appends event, auto-generates monotonic ID, auto-prunes to 10k entries in one atomic command
+- `XREAD COUNT 100 STREAMS gamma:system:events lastId` — replay missed events using stream ID as cursor (native `Last-Event-ID` equivalent)
+- No separate Pub/Sub channel needed — stream acts as both persistent log and delivery mechanism
 
 ```
-gamma:events:log    → ZSET
-  score: event.id (integer, monotonic)
-  member: JSON.stringify(event)
-  TTL strategy: ZREMRANGEBYSCORE to purge events older than 24h
+XADD gamma:system:events MAXLEN ~ 10000 * type notification payload {...}
+  → returns: "1709123456789-0"  (millisecond timestamp + sequence = monotonic ID)
+  → auto-prunes stream to ~10000 entries (~ = approximate, more efficient)
+  → all XREAD consumers receive it
 
-gamma:events:counter → STRING (INCR for atomic event ID generation)
-
-gamma:system:events  → Pub/Sub channel
+XREAD BLOCK 0 COUNT 10 STREAMS gamma:system:events 1709123456000-0
+  → returns all entries after given ID
+  → BLOCK 0 = wait indefinitely (long-poll style, perfect for SSE)
 ```
 
-### Node.js SSE Implementation (Redis-backed)
+### Node.js SSE Implementation (Redis Streams)
 
 ```typescript
 // events/systemBus.ts
 import { createClient } from 'redis';
 
-const publisher = createClient({ url: process.env.REDIS_URL });
-const subscriber = createClient({ url: process.env.REDIS_URL });
-const dataClient  = createClient({ url: process.env.REDIS_URL });
+const writeClient  = createClient({ url: process.env.REDIS_URL });
+const readClient   = createClient({ url: process.env.REDIS_URL }); // blocking reads need own client
 
-await Promise.all([publisher.connect(), subscriber.connect(), dataClient.connect()]);
+await Promise.all([writeClient.connect(), readClient.connect()]);
 
-const CHANNEL    = 'gamma:system:events';
-const LOG_KEY    = 'gamma:events:log';
-const COUNTER_KEY = 'gamma:events:counter';
-const LOG_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+const STREAM_KEY = 'gamma:system:events';
+const STREAM_MAXLEN = 10_000;
 
-export interface SSEEvent {
-  id: number;
+export interface SSEPayload {
   type: 'notification' | 'agent_status' | 'system_alert';
-  payload: object;
-  ts: number; // unix ms — used for TTL pruning
+  data: object;
 }
 
-// Emit from any backend service (all instances receive it)
-export async function emitSystemEvent(type: string, payload: object): Promise<void> {
-  const id = await dataClient.incr(COUNTER_KEY); // atomic, cluster-safe
-  const event: SSEEvent = { id, type, payload, ts: Date.now() };
-  const serialized = JSON.stringify(event);
-
-  await Promise.all([
-    // Persist to ZSET for Last-Event-ID replay
-    dataClient.zAdd(LOG_KEY, { score: id, value: serialized }),
-    // Prune events older than 24h
-    dataClient.zRemRangeByScore(LOG_KEY, 0, Date.now() - LOG_TTL_MS),
-    // Broadcast to all connected instances
-    publisher.publish(CHANNEL, serialized),
-  ]);
+// Emit from anywhere in backend — cluster-safe, no INCR needed (stream auto-IDs)
+export async function emitSystemEvent(payload: SSEPayload): Promise<string> {
+  const id = await writeClient.xAdd(
+    STREAM_KEY,
+    '*',                          // auto-generate ID (timestamp-based, monotonic)
+    { type: payload.type, data: JSON.stringify(payload.data) },
+    { TRIM: { strategy: 'MAXLEN', strategyModifier: '~', threshold: STREAM_MAXLEN } }
+  );
+  return id; // e.g. "1709123456789-0"
 }
 ```
 
 ```typescript
 // routes/events.ts
-import { Response, Request } from 'express';
-
-app.get('/api/v1/system/events', async (req: Request, res: Response) => {
+app.get('/api/v1/system/events', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  // --- Last-Event-ID replay (robust across restarts and instances) ---
-  const lastId = parseInt(req.headers['last-event-id'] as string ?? '0');
-  if (lastId > 0) {
-    // Fetch all events with id > lastId from Redis ZSET
-    const missed = await dataClient.zRangeByScore(LOG_KEY, lastId + 1, '+inf');
-    for (const raw of missed) {
-      sendSSE(res, JSON.parse(raw) as SSEEvent);
-    }
-  }
+  // Last-Event-ID from browser header = last Redis Stream ID seen by client
+  // On fresh connect: '0-0' (read from beginning of available log)
+  // On reconnect: browser sends last received ID automatically
+  let lastId = (req.headers['last-event-id'] as string) || '0-0';
 
-  // --- Heartbeat ---
   const heartbeat = setInterval(() => res.write(': ping\n\n'), 25_000);
 
-  // --- Subscribe to Redis Pub/Sub ---
-  // Each SSE connection gets its own subscriber client
-  const sub = subscriber.duplicate();
-  await sub.connect();
+  // Each SSE connection gets its own blocking read loop
+  const readerClient = readClient.duplicate();
+  await readerClient.connect();
 
-  await sub.subscribe(CHANNEL, (raw: string) => {
-    sendSSE(res, JSON.parse(raw) as SSEEvent);
-  });
+  let active = true;
 
   req.on('close', async () => {
+    active = false;
     clearInterval(heartbeat);
-    await sub.unsubscribe(CHANNEL);
-    await sub.disconnect();
+    await readerClient.disconnect();
   });
-});
 
-function sendSSE(res: Response, event: SSEEvent): void {
-  res.write(`id: ${event.id}\n`);
-  res.write(`event: ${event.type}\n`);
-  res.write(`data: ${JSON.stringify(event.payload)}\n\n`);
-}
+  // Blocking read loop — XREAD BLOCK waits for new entries, no polling
+  while (active) {
+    const results = await readerClient.xRead(
+      [{ key: STREAM_KEY, id: lastId }],
+      { COUNT: 100, BLOCK: 25_000 } // 25s block timeout matches heartbeat
+    );
+
+    if (!results || !active) continue;
+
+    for (const stream of results) {
+      for (const entry of stream.messages) {
+        const { type, data } = entry.message;
+        res.write(`id: ${entry.id}\n`);
+        res.write(`event: ${type}\n`);
+        res.write(`data: ${data}\n\n`);
+        lastId = entry.id; // advance cursor
+      }
+    }
+  }
+});
 ```
 
-### Cluster Topology — Why This Works
+### Why This Works Across Instances
 
-| Scenario | In-Memory (old) | Redis-backed (new) |
+| Scenario | Old (ZSET+PubSub) | New (Redis Streams) |
 |---|---|---|
-| Single node restart | ❌ eventLog lost | ✅ ZSET persists |
-| PM2 cluster (4 instances) | ❌ each has own log | ✅ shared Pub/Sub + ZSET |
-| Kubernetes rolling deploy | ❌ split-brain | ✅ all pods share Redis |
-| Last-Event-ID replay | ❌ after restart | ✅ always reliable |
-| Memory leak | ❌ unbounded array | ✅ TTL auto-prune |
+| Server restart | ❌ eventLog lost | ✅ stream persists |
+| PM2 cluster | ❌ split-brain Pub/Sub | ✅ all read from same stream |
+| K8s rolling deploy | ❌ missed events | ✅ `Last-Event-ID` = stream cursor |
+| High RPS cleanup | ❌ `ZREMRANGEBYSCORE` on every write | ✅ `MAXLEN ~` in XADD, amortized |
+| New subscriber joins late | ❌ Pub/Sub = lost | ✅ XREAD from any past ID |
 
 ### GET `/api/v1/apps`
 
@@ -640,7 +686,7 @@ interface AppsResponse {
 }
 ```
 
-### SSE Event Payload Contracts
+### SSE Event Payloads
 
 ```typescript
 interface NotificationPayload {
@@ -650,13 +696,13 @@ interface NotificationPayload {
   priority: 'low' | 'normal' | 'high';
 }
 
-// Wire format:
-// id: 42
+// Wire format (Redis Stream entry → SSE):
+// id: 1709123456789-0
 // event: notification
-// data: {"appId":"agent-monitor","title":"Agent Finished","body":"Task completed in 3.2s","priority":"normal"}
+// data: {"appId":"agent-monitor","title":"Agent done","body":"3.2s","priority":"normal"}
 ```
 
-### Client-Side SSE Hook
+### Client-Side SSE
 
 ```typescript
 // hooks/useSystemEvents.ts
@@ -665,8 +711,8 @@ export function useSystemEvents() {
 
   useEffect(() => {
     const connect = () => {
-      // Browser automatically sends Last-Event-ID header on reconnect
-      // when server sets id: in the stream — zero extra client code
+      // Browser auto-sends Last-Event-ID on reconnect
+      // Value = last Redis Stream ID — backend uses it as XREAD cursor
       const es = new EventSource('/api/v1/system/events');
 
       es.addEventListener('notification', (e: MessageEvent) => {
@@ -676,7 +722,7 @@ export function useSystemEvents() {
 
       es.onerror = () => {
         es.close();
-        setTimeout(connect, 3_000); // exponential backoff can be added
+        setTimeout(connect, 3_000);
       };
 
       return es;
@@ -695,12 +741,14 @@ export function useSystemEvents() {
 | # | Decision | Rationale |
 |---|---|---|
 | 1 | `focusedWindowId` scalar in store | Eliminates O(N) re-renders on focus change |
-| 2 | Drag via local Ref + RAF, Zustand only on `pointerup` | Guarantees 60fps drag, zero React involvement during motion |
-| 3 | Redis Pub/Sub + ZSET for SSE bus | Stateless backend, multi-instance safe, Last-Event-ID reliable across restarts |
+| 2 | Drag + Resize via local Ref + RAF; Zustand only on `pointerup` | Guarantees 60fps, zero React involvement during motion |
+| 3 | Redis Streams (`XADD MAXLEN`) replaces ZSET + Pub/Sub | Single structure for both persistence and fan-out; `MAXLEN ~` auto-prunes; cursor-based replay |
 | 4 | `visibility: hidden` for minimized windows | Preserves WebSocket, WebGL, local state — no remount cost |
 | 5 | ErrorBoundary `key={windowId}` | Auto-reset on re-open, no stale error state |
-| 6 | Monotonic Z-index counter | O(1) focus, no sorting, practically unbounded |
+| 6 | Mandatory cleanup contract in every `<AppContent />` | Prevents zombie WebSockets, intervals, and WebGL contexts on window close |
+| 7 | Phase 1 same-thread execution; Phase 2 iframe/Worker sandbox | Pragmatic for first-party apps; isolation deferred to when third-party agents exist |
+| 8 | 8-handle resize (`n/s/e/w/ne/nw/se/sw`) | Full OS-grade window resizing from any edge or corner |
 
 ---
 
-*Gamma OS Phase 1 Spec v2 — revised 2026-03-08*
+*Gamma OS Phase 1 Spec v3 — revised 2026-03-08*
