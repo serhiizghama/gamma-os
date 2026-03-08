@@ -1,58 +1,131 @@
 :root {
-  /* Glass morphism */
-  --glass-bg: rgba(30, 30, 32, 0.72);
-  --glass-border: rgba(255, 255, 255, 0.08);
+  /* ── Glass morphism ───────────────────────────────────────── */
+  --glass-bg: rgba(255, 255, 255, 0.18);
+  --glass-border: rgba(255, 255, 255, 0.28);
   --glass-blur: blur(20px) saturate(180%);
-  --glass-shadow: 0 22px 70px rgba(0, 0, 0, 0.56);
+  --glass-shadow: 0 22px 70px rgba(80, 60, 120, 0.18);
 
-  /* macOS window chrome */
-  --window-bg: rgba(28, 28, 30, 0.85);
+  /* ── macOS window chrome ──────────────────────────────────── */
+  --window-bg: rgba(245, 243, 255, 0.72);
   --window-titlebar-height: 28px;
   --window-radius: 12px;
-  --window-border: 1px solid rgba(255, 255, 255, 0.06);
+  --window-border: 1px solid rgba(255, 255, 255, 0.45);
   --window-min-width: 320px;
   --window-min-height: 200px;
 
-  /* Dock */
-  --dock-bg: rgba(255, 255, 255, 0.12);
-  --dock-blur: blur(24px) saturate(200%);
-  --dock-radius: 18px;
+  /* Window text uses dark tones on the lighter background */
+  --window-text-primary: rgba(30, 22, 50, 0.88);
+  --window-text-secondary: rgba(30, 22, 50, 0.48);
+
+  /* ── Dock ─────────────────────────────────────────────────── */
+  --dock-bg: rgba(255, 255, 255, 0.28);
+  --dock-blur: blur(28px) saturate(200%);
+  --dock-radius: 20px;
   --dock-icon-size: 56px;
-  --dock-padding: 8px 12px;
+  --dock-padding: 8px 14px;
 
-  /* Typography */
+  /* ── Typography ───────────────────────────────────────────── */
   --font-system: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
-  --text-primary: rgba(255, 255, 255, 0.92);
-  --text-secondary: rgba(255, 255, 255, 0.48);
+  --text-primary: rgba(255, 255, 255, 0.95);
+  --text-secondary: rgba(255, 255, 255, 0.55);
 
-  /* Notifications */
-  --notif-bg: rgba(44, 44, 46, 0.9);
+  /* ── Notifications ────────────────────────────────────────── */
+  --notif-bg: rgba(255, 255, 255, 0.78);
   --notif-radius: 14px;
-  --notif-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  --notif-shadow: 0 8px 32px rgba(80, 60, 120, 0.22);
 
-  /* Traffic lights */
+  /* ── Traffic lights ───────────────────────────────────────── */
   --btn-close: #ff5f57;
   --btn-minimize: #febc2e;
   --btn-maximize: #28c840;
 
-  /* Motion */
+  /* ── Motion ───────────────────────────────────────────────── */
   --spring-fast: cubic-bezier(0.34, 1.56, 0.64, 1);
   --ease-smooth: cubic-bezier(0.25, 0.46, 0.45, 0.94);
   --duration-fast: 180ms;
   --duration-normal: 280ms;
   --duration-slow: 420ms;
+
+  /* ── Background palette ───────────────────────────────────── */
+  --bg-blob-1: rgba(160, 210, 255, 0.55);  /* soft cyan    */
+  --bg-blob-2: rgba(200, 180, 255, 0.45);  /* pale lavender */
+  --bg-blob-3: rgba(255, 200, 180, 0.40);  /* gentle peach  */
+  --bg-blob-4: rgba(160, 240, 210, 0.35);  /* soft mint     */
+  --bg-base: #dce8f7;
 }
 
+/* ── Background blob animations ──────────────────────────────── */
+@keyframes blobFloat1 {
+  0%   { transform: translate(0px,   0px)   scale(1);    }
+  33%  { transform: translate(40px, -30px)  scale(1.08); }
+  66%  { transform: translate(-25px, 20px)  scale(0.95); }
+  100% { transform: translate(0px,   0px)   scale(1);    }
+}
+@keyframes blobFloat2 {
+  0%   { transform: translate(0px,   0px)   scale(1);    }
+  40%  { transform: translate(-50px, 30px)  scale(1.06); }
+  70%  { transform: translate(35px, -20px)  scale(0.97); }
+  100% { transform: translate(0px,   0px)   scale(1);    }
+}
+@keyframes blobFloat3 {
+  0%   { transform: translate(0px,  0px)   scale(1);    }
+  30%  { transform: translate(30px, 40px)  scale(1.05); }
+  65%  { transform: translate(-20px,-25px) scale(0.96); }
+  100% { transform: translate(0px,  0px)   scale(1);    }
+}
+@keyframes blobFloat4 {
+  0%   { transform: translate(0px,  0px)  scale(1);    }
+  50%  { transform: translate(-35px,35px) scale(1.07); }
+  100% { transform: translate(0px,  0px)  scale(1);    }
+}
+
+.live-bg {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-base);
+  overflow: hidden;
+  z-index: 0;
+}
+
+.live-bg__blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  will-change: transform;
+}
+
+.live-bg__blob--1 {
+  width: 55vw; height: 55vw;
+  top: -15%; left: -10%;
+  background: var(--bg-blob-1);
+  animation: blobFloat1 58s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+}
+.live-bg__blob--2 {
+  width: 50vw; height: 50vw;
+  top: 20%; right: -12%;
+  background: var(--bg-blob-2);
+  animation: blobFloat2 72s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+}
+.live-bg__blob--3 {
+  width: 45vw; height: 45vw;
+  bottom: -10%; left: 20%;
+  background: var(--bg-blob-3);
+  animation: blobFloat3 65s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+}
+.live-bg__blob--4 {
+  width: 38vw; height: 38vw;
+  bottom: 5%; right: 15%;
+  background: var(--bg-blob-4);
+  animation: blobFloat4 80s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+}
+
+/* ── Window animations ────────────────────────────────────────── */
 @keyframes windowOpen {
   from { opacity: 0; transform: scale(0.92) translateY(8px); }
   to   { opacity: 1; transform: scale(1) translateY(0); }
 }
 
-@keyframes windowMinimize {
-  to { opacity: 0; transform: scale(0.08) translate(var(--dock-target-x), var(--dock-target-y)); }
-}
-
-/* Window position shell — transform ONLY, no animation (animation would override translate) */
+/* Window position shell */
 .window {
   position: absolute;
   width: var(--win-w, 800px);
@@ -63,7 +136,6 @@
   left: 0;
 }
 
-/* Window visual frame — inner layer, gets the open animation */
 .window__frame {
   width: 100%;
   height: 100%;
@@ -80,7 +152,7 @@
   pointer-events: none;
 }
 
-/* ── Window TitleBar & Traffic Lights ───────────────────────── */
+/* ── Window TitleBar & Traffic Lights ────────────────────────── */
 .window-titlebar {
   height: var(--window-titlebar-height);
   display: flex;
@@ -90,40 +162,23 @@
   flex-shrink: 0;
   cursor: grab;
   user-select: none;
-  border-bottom: 1px solid var(--glass-border);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
 }
 
-.window-titlebar__lights {
-  display: flex;
-  gap: 6px;
-  flex-shrink: 0;
-}
+.window-titlebar__lights { display: flex; gap: 6px; flex-shrink: 0; }
 
-/* ── Traffic light base ── */
-.btn-close,
-.btn-minimize,
-.btn-maximize {
+.btn-close, .btn-minimize, .btn-maximize {
   position: relative;
-  width: 12px;
-  height: 12px;
+  width: 12px; height: 12px;
   border-radius: 50%;
-  border: none;
-  cursor: pointer;
-  padding: 0;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  border: none; cursor: pointer; padding: 0; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
 }
-
 .btn-close    { background: var(--btn-close); }
 .btn-minimize { background: var(--btn-minimize); }
 .btn-maximize { background: var(--btn-maximize); }
 
-/* ── Symbol pseudo-elements (hidden by default) ── */
-.btn-close::after,
-.btn-minimize::after,
-.btn-maximize::after {
+.btn-close::after, .btn-minimize::after, .btn-maximize::after {
   content: '';
   position: absolute;
   opacity: 0;
@@ -131,96 +186,150 @@
   pointer-events: none;
 }
 
-/* × — two rotated bars via background gradients */
 .btn-close::after {
-  width: 6px;
-  height: 6px;
+  width: 6px; height: 6px;
   background:
-    linear-gradient(
-      45deg,
+    linear-gradient(45deg,
       transparent calc(50% - 0.5px),
       rgba(0,0,0,0.65) calc(50% - 0.5px),
       rgba(0,0,0,0.65) calc(50% + 0.5px),
-      transparent calc(50% + 0.5px)
-    ),
-    linear-gradient(
-      -45deg,
+      transparent calc(50% + 0.5px)),
+    linear-gradient(-45deg,
       transparent calc(50% - 0.5px),
       rgba(0,0,0,0.65) calc(50% - 0.5px),
       rgba(0,0,0,0.65) calc(50% + 0.5px),
-      transparent calc(50% + 0.5px)
-    );
+      transparent calc(50% + 0.5px));
 }
-
-/* – — single horizontal bar */
 .btn-minimize::after {
-  width: 6px;
-  height: 1px;
+  width: 6px; height: 1px;
   background: rgba(0,0,0,0.55);
   border-radius: 1px;
 }
-
-/* ↔ — two inward-pointing triangles (expand arrows) via clip-path on ::after + ::before */
-/* Using a ⤢ shape: top-left corner + bottom-right corner lines */
 .btn-maximize::after {
-  width: 5px;
-  height: 5px;
+  width: 5px; height: 5px;
   border: 1px solid rgba(0,0,0,0.6);
   border-radius: 1px;
   background: transparent;
   transform: rotate(45deg) scale(0.85);
 }
 
-/* ── Reveal all symbols on titlebar hover ── */
 .window-titlebar:hover .btn-close::after,
 .window-titlebar:hover .btn-minimize::after,
-.window-titlebar:hover .btn-maximize::after {
-  opacity: 1;
-}
+.window-titlebar:hover .btn-maximize::after { opacity: 1; }
 
-/* ── Subtle brightness on individual button hover ── */
 .btn-close:hover    { filter: brightness(0.88); }
 .btn-minimize:hover { filter: brightness(0.88); }
 .btn-maximize:hover { filter: brightness(0.88); }
 
 .window-titlebar__title {
-  flex: 1;
-  text-align: center;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  flex: 1; text-align: center;
+  font-size: 13px; font-weight: 500;
+  color: rgba(30, 22, 50, 0.55);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   pointer-events: none;
   font-family: var(--font-system);
 }
+.window-titlebar__spacer { width: 42px; flex-shrink: 0; }
 
-.window-titlebar__spacer {
-  width: 42px;
-  flex-shrink: 0;
+/* ── AppIcon — Dock & Launchpad ───────────────────────────────── */
+.app-icon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 8px 6px 4px;
+  border-radius: 14px;
+  position: relative;
 }
 
-/* ── Toast Notifications ─────────────────────────────────────── */
+.app-icon__glyph {
+  font-size: 36px;
+  line-height: 1;
+  display: block;
+  /* GPU layer for transform — no layout impact */
+  will-change: transform;
+  transform: translateY(0px) scale(1);
+  transition: transform var(--duration-normal) var(--spring-fast);
+  filter: drop-shadow(0 2px 6px rgba(80, 60, 120, 0.25));
+}
+
+/* Shadow shelf — appears under the glyph when it lifts */
+.app-icon__glyph::after {
+  content: '';
+  display: block;
+  position: absolute;
+  bottom: 28px;
+  left: 50%;
+  width: 28px;
+  height: 6px;
+  transform: translateX(-50%) scaleX(0.6);
+  background: radial-gradient(ellipse at center, rgba(40, 20, 80, 0.22) 0%, transparent 80%);
+  opacity: 0;
+  transition:
+    opacity var(--duration-normal) var(--ease-smooth),
+    transform var(--duration-normal) var(--ease-smooth);
+  pointer-events: none;
+}
+
+.app-icon__label {
+  font-size: 11px;
+  font-weight: 500;
+  font-family: var(--font-system);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 64px;
+  line-height: 1;
+}
+
+/* Dock label — white on glass */
+.app-icon--dock .app-icon__label {
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+
+/* Launchpad label — white on dark overlay */
+.app-icon--launchpad .app-icon__label {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+}
+
+/* Hover — organic lift */
+.app-icon:hover .app-icon__glyph {
+  transform: translateY(-8px) scale(1.1);
+}
+
+/* Shadow shelf appears on hover */
+.app-icon:hover .app-icon__glyph::after {
+  opacity: 1;
+  transform: translateX(-50%) scaleX(1);
+}
+
+/* Launchpad: subtle bg on hover */
+.app-icon--launchpad:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* ── Toast Notifications ──────────────────────────────────────── */
 @keyframes toastSlideIn {
   from { opacity: 0; transform: translateX(calc(100% + 20px)); }
   to   { opacity: 1; transform: translateX(0); }
 }
-
 @keyframes toastSlideOut {
   from { opacity: 1; transform: translateX(0); }
   to   { opacity: 0; transform: translateX(calc(100% + 20px)); }
 }
-
 .toast-notification {
   animation: toastSlideIn var(--duration-normal) var(--spring-fast) forwards;
 }
-
 .toast-notification--dismissing {
   animation: toastSlideOut var(--duration-fast) var(--ease-smooth) forwards;
 }
 
-/* ── Desktop ─────────────────────────────────────────────────── */
+/* ── Desktop ──────────────────────────────────────────────────── */
 .desktop--launchpad-open {
   backdrop-filter: blur(20px) brightness(0.7);
   transition: backdrop-filter var(--duration-normal) var(--ease-smooth);
