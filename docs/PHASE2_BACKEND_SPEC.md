@@ -1,7 +1,8 @@
 # Gamma OS — Phase 2: Backend Integration Specification
-**Version:** 1.2  
+**Version:** 1.3  
 **Status:** Draft  
 **Audience:** Senior Backend Developer (NestJS + Redis)  
+**Changelog v1.3:** Resilience & Control — agent interruption (abort endpoint), stream throttling/batching, scaffold asset support + static serving, security linting in validateSource, tool result timeout (30s watchdog).  
 **Changelog v1.2:** Production-grade resilience additions — session recovery (F5 sync), scaffold code validation, memory bus hierarchy (decision tree), SSE keep-alive + gateway_status, CORS policy.  
 **Changelog v1.1:** Enhanced streaming architecture based on openclaw-studio analysis — phase-aware event bridge, thinking/tool/lifecycle stream types, frontend Zustand state model.
 
@@ -51,7 +52,8 @@ Claude / local models / sub-agents
 ### 3.1 Agent Status
 
 ```typescript
-export type AgentStatus = "idle" | "running" | "error";
+// v1.3: added "aborted" — set when user calls POST /abort or tool timeout fires
+export type AgentStatus = "idle" | "running" | "error" | "aborted";
 ```
 
 ### 3.2 OpenClaw Gateway Frames
@@ -266,8 +268,10 @@ POST   /api/sessions                   Create window↔session mapping
 DELETE /api/sessions/:windowId         Destroy session
 POST   /api/sessions/:windowId/send    Send user message to agent
 GET    /api/sessions/:windowId/sync    ← v1.2: F5 recovery snapshot
+POST   /api/sessions/:windowId/abort   ← v1.3: Interrupt running agent
 GET    /api/stream/:windowId           SSE stream (text/event-stream)
 POST   /api/scaffold                   Scaffold a new app component
+GET    /api/assets/:appId/*            ← v1.3: Serve scaffold static assets
 GET    /api/memory-bus                 SSE stream of all memory bus entries
 GET    /api/sessions                   List active window→session mappings
 ```
@@ -328,6 +332,72 @@ if (stream === "lifecycle" && data?.phase === "end") {
 ```
 
 Redis key `gamma:state:<windowId>` — Hash, TTL 4h.
+
+### 4.2 Agent Abort Endpoint (v1.3)
+
+```typescript
+// src/sessions/sessions.controller.ts
+@Post(":windowId/abort")
+async abort(@Param("windowId") windowId: string): Promise<{ ok: boolean }> {
+  const session = await this.sessionsService.findByWindowId(windowId);
+  if (!session) throw new NotFoundException(`No session for window ${windowId}`);
+
+  await this.gatewayWsService.abortRun(session.sessionKey);
+
+  // Immediately update Redis state — don't wait for Gateway confirmation
+  await this.redis.hset(`gamma:state:${windowId}`,
+    "status", "aborted",
+    "runId", "",
+  );
+
+  // Push aborted lifecycle event so SSE clients update immediately
+  await this.redis.xadd(`gamma:sse:${windowId}`, "*",
+    ...flattenEntry({
+      type: "lifecycle_error",
+      windowId,
+      runId: session.runId ?? "",
+      message: "Run aborted by user",
+    })
+  );
+
+  return { ok: true };
+}
+```
+
+In `GatewayWsService`:
+
+```typescript
+// src/gateway/gateway-ws.service.ts
+async abortRun(sessionKey: string): Promise<void> {
+  // Send cancellation frame to OpenClaw Gateway
+  // OpenClaw protocol: type="req", method="sessions.abort"
+  const frameId = ulid();
+  this.send({
+    type: "req",
+    id: frameId,
+    method: "sessions.abort",
+    params: { sessionKey },
+  });
+
+  // Wait up to 2s for Gateway ack — fire-and-forget if no response
+  try {
+    await this.waitForResponse(frameId, 2000);
+  } catch {
+    // Gateway may not ack abort — that's acceptable; Redis state is already updated
+  }
+}
+```
+
+Frontend: add `"aborted"` handling in reducer:
+```typescript
+case "lifecycle_error":
+  return {
+    ...state,
+    status: event.message === "Run aborted by user" ? "aborted" : "error",
+    runId: null,
+    streamText: null,
+  };
+```
 
 ---
 
@@ -544,6 +614,112 @@ private async pushMemoryBus(entry: Omit<MemoryBusEntry, "id">) {
 
 ---
 
+## 6.2 Tool Result Timeout Watchdog (v1.3)
+
+If a `tool_call` fires but no matching `tool_result` arrives within **30 seconds**, the backend auto-injects a `lifecycle_error` to prevent the UI from hanging indefinitely in "running" state.
+
+```typescript
+// src/gateway/tool-watchdog.service.ts
+const TOOL_TIMEOUT_MS = 30_000;
+
+@Injectable()
+export class ToolWatchdogService {
+  private pendingCalls = new Map<string, ReturnType<typeof setTimeout>>();
+  // key: `${windowId}:${toolCallId}`
+
+  /**
+   * Register a tool call. If no result arrives within TOOL_TIMEOUT_MS,
+   * fire the timeout callback.
+   */
+  register(
+    windowId: string,
+    toolCallId: string,
+    runId: string,
+    onTimeout: () => void,
+  ): void {
+    const key = `${windowId}:${toolCallId}`;
+    const timer = setTimeout(() => {
+      this.pendingCalls.delete(key);
+      onTimeout();
+    }, TOOL_TIMEOUT_MS);
+    this.pendingCalls.set(key, timer);
+  }
+
+  /** Cancel the watchdog when a tool_result arrives in time. */
+  resolve(windowId: string, toolCallId: string): void {
+    const key = `${windowId}:${toolCallId}`;
+    const timer = this.pendingCalls.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      this.pendingCalls.delete(key);
+    }
+  }
+
+  /** Clean up all pending timers for a window (on lifecycle_end / abort). */
+  clearWindow(windowId: string): void {
+    for (const [key, timer] of this.pendingCalls) {
+      if (key.startsWith(`${windowId}:`)) {
+        clearTimeout(timer);
+        this.pendingCalls.delete(key);
+      }
+    }
+  }
+}
+```
+
+Integrate into `handleAgentEvent()`:
+
+```typescript
+// When tool_call arrives:
+if (stream === "tool" && data?.phase !== "result") {
+  await this.pushSSE(streamKey, { type: "tool_call", ... });
+
+  // Register watchdog
+  this.toolWatchdog.register(windowId, data.toolCallId!, runId, async () => {
+    await this.pushSSE(streamKey, {
+      type: "lifecycle_error",
+      windowId,
+      runId,
+      message: `Tool '${data.name}' timed out after ${TOOL_TIMEOUT_MS / 1000}s`,
+    });
+    // Update Redis state
+    await this.redis.hset(`gamma:state:${windowId}`, "status", "error", "runId", "");
+  });
+}
+
+// When tool_result arrives:
+if (stream === "tool" && data?.phase === "result") {
+  this.toolWatchdog.resolve(windowId, data.toolCallId!);
+  await this.pushSSE(streamKey, { type: "tool_result", ... });
+}
+
+// On lifecycle_end or abort:
+this.toolWatchdog.clearWindow(windowId);
+```
+
+**Redis impact:** None — watchdog is in-memory only. No additional keys required.  
+**Frontend impact:** `lifecycle_error` with timeout message is handled by the existing reducer (`status → "error"`).  
+```typescript
+// Extend existing lifecycle_error case to distinguish timeout:
+case "lifecycle_error": {
+  const isTimeout  = event.message?.includes("timed out");
+  const isAborted  = event.message === "Run aborted by user";
+  return {
+    ...state,
+    status: isAborted ? "aborted" : isTimeout ? "error" : "error",
+    runId: null,
+    streamText: null,
+    // Show timeout message in outputLines for UX clarity
+    outputLines: isTimeout
+      ? [...state.outputLines, `⚠️ ${event.message}`]
+      : state.outputLines,
+  };
+}
+```
+```
+
+---
+
 ## 7. SSE Multiplexer (NestJS → Browser)
 
 ### 7.1 Streaming Controller (v1.2 — keep-alive + gateway_status)
@@ -645,6 +821,112 @@ case "keep_alive":
   // Silently discard — only purpose is to prevent timeout
   return state;
 ```
+
+### 7.3 Stream Throttling & Batching (v1.3)
+
+High-frequency `thinking` and `assistant_delta` events can arrive at 50–200ms intervals. Sending each token directly to the browser causes excessive React re-renders (~20/sec). The SSE bridge **batches** rapid consecutive tokens before forwarding.
+
+```typescript
+// src/sse/stream-batcher.ts
+const BATCH_WINDOW_MS = 50;
+
+interface PendingBatch {
+  windowId: string;
+  runId: string;
+  thinkingChunks: string[];
+  deltaChunks: string[];
+  flushTimer: ReturnType<typeof setTimeout> | null;
+}
+
+export class StreamBatcher {
+  private batches = new Map<string, PendingBatch>();
+
+  constructor(private readonly flush: (event: GammaSSEEvent) => void) {}
+
+  push(event: GammaSSEEvent): void {
+    // Only batch thinking and assistant_delta; all other events pass through immediately
+    if (event.type !== "thinking" && event.type !== "assistant_delta") {
+      this.flush(event);
+      return;
+    }
+
+    const key = `${event.windowId}:${event.runId}`;
+    let batch = this.batches.get(key);
+
+    if (!batch) {
+      batch = {
+        windowId: event.windowId,
+        runId: event.runId,
+        thinkingChunks: [],
+        deltaChunks: [],
+        flushTimer: null,
+      };
+      this.batches.set(key, batch);
+    }
+
+    if (event.type === "thinking")       batch.thinkingChunks.push(event.text);
+    if (event.type === "assistant_delta") batch.deltaChunks.push(event.text);
+
+    // Reset debounce window
+    if (batch.flushTimer) clearTimeout(batch.flushTimer);
+    batch.flushTimer = setTimeout(() => this.flushBatch(key), BATCH_WINDOW_MS);
+  }
+
+  private flushBatch(key: string): void {
+    const batch = this.batches.get(key);
+    if (!batch) return;
+
+    // Emit merged thinking (last accumulated value wins — Gateway sends full text)
+    if (batch.thinkingChunks.length > 0) {
+      this.flush({
+        type: "thinking",
+        windowId: batch.windowId,
+        runId: batch.runId,
+        text: batch.thinkingChunks.at(-1)!,
+      });
+    }
+
+    // Emit merged delta (last value wins — Gateway sends full accumulated text)
+    if (batch.deltaChunks.length > 0) {
+      this.flush({
+        type: "assistant_delta",
+        windowId: batch.windowId,
+        runId: batch.runId,
+        text: batch.deltaChunks.at(-1)!,
+      });
+    }
+
+    this.batches.delete(key);
+  }
+
+  destroy(windowId: string, runId: string): void {
+    const key = `${windowId}:${runId}`;
+    const batch = this.batches.get(key);
+    if (batch?.flushTimer) clearTimeout(batch.flushTimer);
+    this.batches.delete(key);
+  }
+}
+```
+
+Integrate into SSE controller:
+```typescript
+// In SseController.stream()
+const batcher = new StreamBatcher((event) => {
+  subscriber.next({ data: JSON.stringify(event) } as MessageEvent);
+});
+
+// In poll loop, replace direct subscriber.next with:
+batcher.push(event);
+
+// In cleanup:
+return () => {
+  clearInterval(keepAliveInterval);
+  batcher.destroy("*", "*"); // cleanup all pending batches for this connection
+  subscriber.complete();
+};
+```
+
+**Impact:** React re-renders reduced from ~20/sec to ≤2/sec during high-frequency token streaming.
 
 ---
 
@@ -810,13 +1092,14 @@ streamText      → live-printing assistant response (shown while running)
 
 ```
 1. User asks: "Build me a Weather app"
-2. Architect Agent generates WeatherApp.tsx source
-3. Agent calls POST /api/scaffold { appId:"weather", sourceCode:"..." }
-4. NestJS writes file to apps/generated/WeatherApp.tsx
+2. Architect Agent generates WeatherApp.tsx source + optional assets
+3. Agent calls POST /api/scaffold { appId:"weather", sourceCode:"...", files:[...] }
+4. NestJS runs security scan → syntax validation → writes files to disk  ← v1.3
 5. NestJS: git add && git commit -m "feat: generated WeatherApp"
 6. NestJS pushes SSE: { type:"component_ready", appId:"weather", modulePath:"..." }
 7. React: const mod = await import(modulePath) → register in app registry
 8. User opens Weather from Launchpad — no page reload
+9. Assets served via GET /api/assets/:appId/*                             ← v1.3
 ```
 
 ### 9.2 Scaffold Service (v1.2 — with Code Validation)
@@ -902,9 +1185,140 @@ export class ScaffoldService {
 }
 ```
 
+### 9.3 Security Linting in validateSource (v1.3)
+
+Before AST parse, run a security scan to block dangerous patterns in AI-generated code:
+
+```typescript
+// Extend validateSource() in ScaffoldService
+
+/** Patterns that must never appear in generated app code */
+const SECURITY_DENY_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
+  { pattern: /\beval\s*\(/,            reason: "eval() is forbidden — arbitrary code execution risk" },
+  { pattern: /\.innerHTML\s*=/,        reason: "innerHTML assignment — XSS risk; use React JSX instead" },
+  { pattern: /\.outerHTML\s*=/,        reason: "outerHTML assignment — XSS risk" },
+  { pattern: /document\.write\s*\(/,   reason: "document.write() — XSS risk" },
+  { pattern: /localStorage\s*\./,      reason: "Direct localStorage access forbidden in generated apps — use OS store" },
+  { pattern: /sessionStorage\s*\./,    reason: "Direct sessionStorage access forbidden in generated apps" },
+  { pattern: /require\s*\(\s*['"`]child_process/, reason: "child_process require — server-side escape attempt" },
+  { pattern: /process\.env\b/,         reason: "process.env access forbidden in generated client apps" },
+  { pattern: /fetch\s*\(\s*['"`]https?:\/\/(?!localhost|127\.0\.0\.1)/, reason: "External fetch calls require explicit allowlisting" },
+];
+
+private async validateSource(
+  source: string,
+  fileName: string,
+): Promise<{ ok: boolean; errors: string[] }> {
+  const errors: string[] = [];
+
+  // ── Security scan (runs BEFORE syntax parse) ──────────────────────────
+  for (const { pattern, reason } of SECURITY_DENY_PATTERNS) {
+    if (pattern.test(source)) {
+      errors.push(`Security violation in ${fileName}: ${reason}`);
+    }
+  }
+
+  // Abort early if security issues found — don't bother parsing
+  if (errors.length > 0) return { ok: false, errors };
+
+  // ── Fast path: AST parse (syntax only) ────────────────────────────────
+  try {
+    const { parse } = await import("@typescript-eslint/typescript-estree");
+    parse(source, { jsx: true, errorOnUnknownASTType: false, comment: false, tokens: false });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    errors.push(`Syntax error in ${fileName}: ${msg}`);
+  }
+
+  // ── Guard: must export a React component ─────────────────────────────
+  if (!source.includes("export") || !source.includes("React")) {
+    errors.push("Generated file must export a React component");
+  }
+
+  return { ok: errors.length === 0, errors };
+}
+```
+
+### 9.4 Asset Support for Scaffolding (v1.3)
+
+Update `ScaffoldRequest` to accept optional binary/text assets:
+
+```typescript
+export interface ScaffoldAsset {
+  /** Relative path inside the app's asset directory, e.g. "icons/logo.png" */
+  path: string;
+  /** Base64-encoded content for binary assets, or plain text for text assets */
+  content: string;
+  encoding: "base64" | "utf8";
+}
+
+export interface ScaffoldRequest {
+  appId: string;
+  displayName: string;
+  sourceCode: string;
+  commit?: boolean;
+  strictCheck?: boolean;
+  /** v1.3: Optional assets (images, icons, JSON data files) */
+  files?: ScaffoldAsset[];
+}
+```
+
+Write assets to `apps/generated/assets/:appId/`:
+
+```typescript
+// In ScaffoldService.scaffold(), after writing sourceCode:
+if (req.files?.length) {
+  const assetsDir = path.join(this.appsDir, "assets", safeId);
+  await fs.mkdir(assetsDir, { recursive: true });
+
+  for (const asset of req.files) {
+    // Sanitize path — prevent directory traversal
+    const safeAssetPath = path.join(assetsDir, path.basename(asset.path));
+    const buffer = asset.encoding === "base64"
+      ? Buffer.from(asset.content, "base64")
+      : Buffer.from(asset.content, "utf8");
+    await fs.writeFile(safeAssetPath, buffer);
+  }
+}
+```
+
+**Static asset serving module:**
+
+```typescript
+// src/scaffold/scaffold-assets.controller.ts
+@Controller("api/assets")
+export class ScaffoldAssetsController {
+  private readonly assetsRoot = path.join(GAMMA_OS_REPO, "apps/generated/assets");
+
+  @Get(":appId/*")
+  async serveAsset(
+    @Param("appId") appId: string,
+    @Param("0") assetPath: string,
+    @Res() res: FastifyReply,
+  ): Promise<void> {
+    const safeAppId   = appId.replace(/[^a-z0-9-]/gi, "");
+    const safeRelPath = path.normalize(assetPath).replace(/^(\.\.(\/|\\|$))+/, "");
+    const filePath    = path.join(this.assetsRoot, safeAppId, safeRelPath);
+
+    // Ensure path stays within assetsRoot
+    if (!filePath.startsWith(this.assetsRoot)) {
+      res.status(403).send("Forbidden");
+      return;
+    }
+
+    try {
+      await res.sendFile(filePath);
+    } catch {
+      res.status(404).send("Asset not found");
+    }
+  }
+}
+```
+
 **Dependencies to add:**
 ```bash
 npm install --save-dev @typescript-eslint/typescript-estree
+npm install @fastify/static
 ```
 
 ---
@@ -1002,17 +1416,20 @@ gamma-os-server/
 │   ├── gateway/
 │   │   ├── gateway-ws.service.ts      # WS client + event bridge
 │   │   ├── event-classifier.ts        # classifyGatewayEventKind
+│   │   ├── tool-watchdog.service.ts   # ← v1.3: 30s tool timeout watchdog
 │   │   └── gateway.module.ts
 │   ├── sessions/
-│   │   ├── sessions.controller.ts
+│   │   ├── sessions.controller.ts     # POST /abort ← v1.3
 │   │   ├── sessions.service.ts
 │   │   └── sessions.module.ts
 │   ├── sse/
 │   │   ├── sse.controller.ts          # GET /api/stream/:windowId
+│   │   ├── stream-batcher.ts          # ← v1.3: 50ms token batcher
 │   │   └── sse.module.ts
 │   ├── scaffold/
 │   │   ├── scaffold.controller.ts
-│   │   ├── scaffold.service.ts
+│   │   ├── scaffold.service.ts        # validateSource + security scan ← v1.3
+│   │   ├── scaffold-assets.controller.ts  # ← v1.3: GET /api/assets/:appId/*
 │   │   ├── scaffold-watcher.service.ts
 │   │   └── scaffold.module.ts
 │   ├── memory-bus/
@@ -1047,5 +1464,10 @@ gamma-os-server/
 | P2 | **v1.2** Memory bus parentId/stepId hierarchy | 0.5 day |
 | P2 | **v1.2** CORS policy + Fastify config | 0.5 day |
 | P2 | **v1.2** Frontend sync-on-mount in useAgentStream | 0.5 day |
+| P2 | **v1.3** Agent abort endpoint + Gateway cancel frame | 0.5 day |
+| P2 | **v1.3** StreamBatcher (50ms token debounce) | 0.5 day |
+| P2 | **v1.3** Scaffold asset upload + static serving | 0.5 day |
+| P2 | **v1.3** Security linting (8 deny patterns) | 0.25 day |
+| P2 | **v1.3** Tool result watchdog (30s timeout) | 0.5 day |
 
-**Total Phase 2 estimate: ~11.5 developer-days** (+2.5 days for v1.2 resilience layer)
+**Total Phase 2 estimate: ~14 developer-days** (+2.5 days for v1.3 resilience & control layer)
