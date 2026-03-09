@@ -10,7 +10,6 @@ const DEFAULT_UI_SETTINGS: UISettings = {
   theme: "dark",
   bgBlur: 100,
   bgSpeed: 28,
-  backgroundType: "matrix",
 };
 
 function pickNextFocused(
@@ -120,11 +119,6 @@ export const useOSStore = create<OSStore>()(
       updateUISettings: (patch) =>
         set((state) => {
           Object.assign(state.uiSettings, patch);
-        }),
-
-      setBackgroundType: (type) =>
-        set((state) => {
-          state.uiSettings.backgroundType = type;
         }),
 
       resetAll: () => {

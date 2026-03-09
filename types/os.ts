@@ -35,7 +35,6 @@ export interface UISettings {
   theme: "dark" | "light";
   bgBlur: number;            // px — blob filter blur (60–140)
   bgSpeed: number;           // s  — base breath cycle duration (10–60)
-  backgroundType: "live" | "matrix";
 }
 
 export interface OSStore {
@@ -64,6 +63,5 @@ export interface OSStore {
   dismissToast: (id: string) => void;
 
   updateUISettings: (patch: Partial<UISettings>) => void;
-  setBackgroundType: (type: UISettings["backgroundType"]) => void;
   resetAll: () => void;
 }
