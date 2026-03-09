@@ -168,6 +168,24 @@
   pointer-events: none;
 }
 
+/* ── Boot Screen animations ───────────────────────────────────── */
+@keyframes bootPulse {
+  0%, 100% { text-shadow: 0 0 30px rgba(0,180,255,0.8), 0 0 60px rgba(0,100,255,0.4); }
+  50%       { text-shadow: 0 0 50px rgba(0,220,255,1.0), 0 0 100px rgba(0,140,255,0.7); }
+}
+@keyframes glitch1 {
+  0%, 90%, 100% { transform: translateX(-3px); opacity: 0; }
+  92%           { transform: translateX(-6px); opacity: 0.7; }
+  94%           { transform: translateX(3px);  opacity: 0.5; }
+  96%           { transform: translateX(-3px); opacity: 0.7; }
+}
+@keyframes glitch2 {
+  0%, 88%, 100% { transform: translateX(3px); opacity: 0; }
+  90%           { transform: translateX(6px);  opacity: 0.7; }
+  93%           { transform: translateX(-3px); opacity: 0.5; }
+  95%           { transform: translateX(3px);  opacity: 0.7; }
+}
+
 /* ── Window animations ────────────────────────────────────────── */
 @keyframes windowOpen {
   from { opacity: 0; transform: scale(0.92) translateY(8px); }

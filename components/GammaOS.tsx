@@ -1,6 +1,7 @@
-import React, { useEffect } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import "../styles/os-theme.css";
 import { useOSStore } from "../store/useOSStore";
+import { BootScreen } from "./BootScreen";
 import { Desktop } from "./Desktop";
 import { Dock } from "./Dock";
 import { Launchpad } from "./Launchpad";
@@ -33,10 +34,15 @@ function useFreshBootDefaults() {
 }
 
 export function GammaOS(): React.ReactElement {
+  const [booting, setBooting] = useState(true);
+  const handleBootDone = useCallback(() => setBooting(false), []);
+
   useFreshBootDefaults();
   useSystemEvents(); // mock SSE → real EventSource in production
 
   return (
+    <>
+      {booting && <BootScreen onDone={handleBootDone} />}
     <div
       id="gamma-os"
       style={{
@@ -74,5 +80,6 @@ export function GammaOS(): React.ReactElement {
         }}
       />
     </div>
+    </>
   );
 }

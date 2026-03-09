@@ -1,7 +1,8 @@
 # Gamma OS — Phase 2: Backend Integration Specification
-**Version:** 1.1  
+**Version:** 1.2  
 **Status:** Draft  
 **Audience:** Senior Backend Developer (NestJS + Redis)  
+**Changelog v1.2:** Production-grade resilience additions — session recovery (F5 sync), scaffold code validation, memory bus hierarchy (decision tree), SSE keep-alive + gateway_status, CORS policy.  
 **Changelog v1.1:** Enhanced streaming architecture based on openclaw-studio analysis — phase-aware event bridge, thinking/tool/lifecycle stream types, frontend Zustand state model.
 
 ---
@@ -214,6 +215,45 @@ export interface MemoryBusEntry {
   kind: "thought" | "tool_call" | "tool_result" | "text";
   content: string;
   ts: number;
+
+  // ── v1.2 — Hierarchy support (Decision Tree reconstruction) ───────────
+  /**
+   * stepId — unique identifier for this reasoning/tool step within a run.
+   * Generated as `${runId}:step:${seq}` by the event bridge.
+   */
+  stepId: string;
+
+  /**
+   * parentId — stepId of the parent entry.
+   * - For tool_call: parentId = the thinking/assistant entry that triggered it
+   * - For tool_result: parentId = the matching tool_call stepId
+   * - For thought: parentId = previous thought stepId (for multi-hop reasoning chains)
+   * - null for root-level entries (first thought in a run)
+   */
+  parentId?: string;
+}
+```
+
+### 3.7 Session Sync Snapshot (v1.2)
+
+```typescript
+/**
+ * Snapshot returned by GET /api/sessions/:windowId/sync
+ * Allows frontend to resume live streams after F5.
+ */
+export interface WindowStateSyncSnapshot {
+  windowId: string;
+  sessionKey: string;
+  status: AgentStatus;
+  runId: string | null;
+  /** Last accumulated streamText stored in Redis (null if no active run) */
+  streamText: string | null;
+  /** Last accumulated thinkingTrace stored in Redis (null if no active run) */
+  thinkingTrace: string | null;
+  /** Partial pendingToolLines accumulated during the current run */
+  pendingToolLines: string[];
+  /** Timestamp of last event processed */
+  lastEventAt: number | null;
 }
 ```
 
@@ -225,11 +265,69 @@ export interface MemoryBusEntry {
 POST   /api/sessions                   Create window↔session mapping
 DELETE /api/sessions/:windowId         Destroy session
 POST   /api/sessions/:windowId/send    Send user message to agent
+GET    /api/sessions/:windowId/sync    ← v1.2: F5 recovery snapshot
 GET    /api/stream/:windowId           SSE stream (text/event-stream)
 POST   /api/scaffold                   Scaffold a new app component
 GET    /api/memory-bus                 SSE stream of all memory bus entries
 GET    /api/sessions                   List active window→session mappings
 ```
+
+### 4.1 Session Sync Endpoint (v1.2)
+
+```typescript
+// src/sessions/sessions.controller.ts
+@Get(":windowId/sync")
+async sync(@Param("windowId") windowId: string): Promise<WindowStateSyncSnapshot> {
+  const session = await this.sessionsService.findByWindowId(windowId);
+  if (!session) throw new NotFoundException(`No session for window ${windowId}`);
+
+  // Read live state snapshot from Redis Hash gamma:state:<windowId>
+  const raw = await this.redis.hgetall(`gamma:state:${windowId}`);
+
+  return {
+    windowId,
+    sessionKey: session.sessionKey,
+    status: (raw.status as AgentStatus) ?? "idle",
+    runId: raw.runId ?? null,
+    streamText: raw.streamText ?? null,
+    thinkingTrace: raw.thinkingTrace ?? null,
+    pendingToolLines: raw.pendingToolLines ? JSON.parse(raw.pendingToolLines) : [],
+    lastEventAt: raw.lastEventAt ? Number(raw.lastEventAt) : null,
+  };
+}
+```
+
+The event bridge must **write to `gamma:state:<windowId>`** on every agent event:
+
+```typescript
+// Inside handleAgentEvent() — after pushing to gamma:sse:<windowId>
+// Maintain a live state snapshot for F5 recovery
+await this.redis.hset(`gamma:state:${windowId}`,
+  "status",        "running",
+  "runId",         runId,
+  "lastEventAt",   String(Date.now()),
+  // Overwrite streamText / thinkingTrace on each delta
+  ...(stream === "assistant" && data?.text
+    ? ["streamText", data.text]
+    : []),
+  ...(stream === "thinking" && data?.text
+    ? ["thinkingTrace", data.text]
+    : []),
+);
+
+// On lifecycle_end: update status, clear ephemeral fields
+if (stream === "lifecycle" && data?.phase === "end") {
+  await this.redis.hset(`gamma:state:${windowId}`,
+    "status",        "idle",
+    "runId",         "",
+    "streamText",    "",
+    "thinkingTrace", "",
+    "pendingToolLines", "[]",
+  );
+}
+```
+
+Redis key `gamma:state:<windowId>` — Hash, TTL 4h.
 
 ---
 
@@ -448,6 +546,8 @@ private async pushMemoryBus(entry: Omit<MemoryBusEntry, "id">) {
 
 ## 7. SSE Multiplexer (NestJS → Browser)
 
+### 7.1 Streaming Controller (v1.2 — keep-alive + gateway_status)
+
 ```typescript
 // src/sse/sse.controller.ts
 @Controller("api/stream")
@@ -457,6 +557,18 @@ export class SseController {
     return new Observable((subscriber) => {
       const keys = [`gamma:sse:${windowId}`, "gamma:sse:broadcast"];
       let lastIds: Record<string, string> = Object.fromEntries(keys.map(k => [k, "$"]));
+
+      // ── v1.2: Keep-alive — send SSE comment every 15s to prevent
+      // browser / Nginx / load-balancer timeout (60s default idle).
+      // SSE spec: lines starting with ":" are comments, ignored by clients.
+      const keepAliveInterval = setInterval(() => {
+        if (!subscriber.closed) {
+          // Raw SSE comment — NestJS MessageEvent wraps in "data:", so
+          // we use a sentinel value and strip it on the client, OR
+          // send a typed keep-alive event:
+          subscriber.next({ data: JSON.stringify({ type: "keep_alive" }) } as MessageEvent);
+        }
+      }, 15_000);
 
       const poll = async () => {
         try {
@@ -480,17 +592,65 @@ export class SseController {
       };
 
       poll();
-      return () => subscriber.complete();
+      return () => {
+        clearInterval(keepAliveInterval);
+        subscriber.complete();
+      };
     });
   }
 }
+```
+
+### 7.2 Gateway Status Events (v1.2)
+
+When the `GatewayWsService` detects connection loss or reconnect, it broadcasts to `gamma:sse:broadcast`:
+
+```typescript
+// src/gateway/gateway-ws.service.ts
+private onDisconnect() {
+  this.redis.xadd("gamma:sse:broadcast", "*",
+    ...flattenEntry({
+      type: "gateway_status",
+      status: "disconnected",
+      ts: Date.now(),
+    })
+  );
+  this.scheduleReconnect();
+}
+
+private onReconnected() {
+  this.redis.xadd("gamma:sse:broadcast", "*",
+    ...flattenEntry({
+      type: "gateway_status",
+      status: "connected",
+      ts: Date.now(),
+    })
+  );
+}
+```
+
+Add to `GammaSSEEvent` union:
+```typescript
+| { type: "gateway_status"; status: "connected" | "disconnected"; ts: number }
+| { type: "keep_alive" }
+```
+
+Frontend handles:
+```typescript
+case "gateway_status":
+  // Show/hide "Gateway offline" banner in UI
+  dispatch({ type: "SET_GATEWAY_STATUS", status: event.status });
+  break;
+case "keep_alive":
+  // Silently discard — only purpose is to prevent timeout
+  return state;
 ```
 
 ---
 
 ## 8. Frontend: How to Handle SSE Events
 
-### 8.1 Event → State Mapping
+### 8.1 Event → State Mapping (v1.2 — with F5 sync phase)
 
 ```typescript
 // hooks/useAgentStream.ts — runs inside each agent-enabled WindowNode
@@ -498,17 +658,55 @@ function useAgentStream(windowId: string): WindowAgentState {
   const [state, dispatch] = useReducer(agentReducer, INITIAL_WINDOW_AGENT_STATE);
 
   useEffect(() => {
-    const es = new EventSource(`/api/stream/${windowId}`);
+    let es: EventSource;
 
-    es.onmessage = (e) => {
-      const event: GammaSSEEvent = JSON.parse(e.data);
-      dispatch(event);
+    // ── v1.2: Sync phase — restore state from Redis snapshot on mount.
+    // This handles F5 / page refresh while an agent run is in progress.
+    // The sync call happens BEFORE opening SSE so we don't miss events:
+    //   1. GET /api/sessions/:windowId/sync  → seed local state
+    //   2. Open EventSource with lastEventId if available → resume stream
+    const bootstrap = async () => {
+      try {
+        const res  = await fetch(`/api/sessions/${windowId}/sync`);
+        if (res.ok) {
+          const snapshot: WindowStateSyncSnapshot = await res.json();
+          // Hydrate reducer with snapshot
+          dispatch({ type: "sync_snapshot", snapshot });
+        }
+      } catch {
+        // If sync fails (new session, network), just start fresh
+      }
+
+      // Open SSE after sync — events arriving now are newer than the snapshot
+      es = new EventSource(`/api/stream/${windowId}`);
+      es.onmessage = (e) => {
+        const event: GammaSSEEvent = JSON.parse(e.data);
+        dispatch(event);
+      };
     };
 
-    return () => es.close();
+    bootstrap();
+    return () => es?.close();
   }, [windowId]);
 
   return state;
+}
+```
+
+Add `sync_snapshot` case to reducer:
+```typescript
+case "sync_snapshot": {
+  const snap = (event as { snapshot: WindowStateSyncSnapshot }).snapshot;
+  // Only hydrate if there's an active run — otherwise keep initial state
+  if (snap.status !== "running" || !snap.runId) return state;
+  return {
+    ...state,
+    status: snap.status,
+    runId: snap.runId,
+    streamText: snap.streamText,
+    thinkingTrace: snap.thinkingTrace,
+    pendingToolLines: snap.pendingToolLines,
+  };
 }
 ```
 
@@ -621,7 +819,7 @@ streamText      → live-printing assistant response (shown while running)
 8. User opens Weather from Launchpad — no page reload
 ```
 
-### 9.2 Scaffold Service
+### 9.2 Scaffold Service (v1.2 — with Code Validation)
 
 ```typescript
 @Injectable()
@@ -633,6 +831,12 @@ export class ScaffoldService {
     const safeId   = req.appId.replace(/[^a-z0-9-]/gi, "");
     const fileName = `${pascal(safeId)}App.tsx`;
     const filePath = path.join(this.appsDir, fileName);
+
+    // ── v1.2: Validate generated source before writing to disk ───────────
+    const validation = await this.validateSource(req.sourceCode, fileName);
+    if (!validation.ok) {
+      return { ok: false, error: `Syntax validation failed:\n${validation.errors.join("\n")}` };
+    }
 
     await fs.mkdir(this.appsDir, { recursive: true });
     await fs.writeFile(filePath, req.sourceCode, "utf8");
@@ -654,7 +858,53 @@ export class ScaffoldService {
 
     return { ok: true, filePath, commitHash, modulePath };
   }
+
+  /**
+   * Validates TypeScript/TSX source without writing to disk.
+   *
+   * Strategy:
+   * 1. Fast path — use @typescript-eslint/typescript-estree to parse AST
+   *    (no spawning a process, ~10ms). Catches syntax errors.
+   * 2. Slow path (optional, only when req.strictCheck=true) — spawn
+   *    `tsc --noEmit` in a temp directory for full type-checking (~2-4s).
+   *
+   * NOTE: @typescript-eslint/typescript-estree is preferred over spawning tsc
+   * for every scaffold request because it is synchronous (~10ms) vs
+   * tsc (~2-4s per invocation). Full type-check is an optional slow path.
+   */
+  private async validateSource(
+    source: string,
+    fileName: string,
+  ): Promise<{ ok: boolean; errors: string[] }> {
+    const errors: string[] = [];
+
+    // ── Fast path: AST parse (syntax only) ────────────────────────────────
+    try {
+      const { parse } = await import("@typescript-eslint/typescript-estree");
+      parse(source, {
+        jsx: true,
+        errorOnUnknownASTType: false,
+        comment: false,
+        tokens: false,
+      });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      errors.push(`Syntax error in ${fileName}: ${msg}`);
+    }
+
+    // ── Guard: must export a React component ─────────────────────────────
+    if (!source.includes("export") || !source.includes("React")) {
+      errors.push("Generated file must export a React component");
+    }
+
+    return { ok: errors.length === 0, errors };
+  }
 }
+```
+
+**Dependencies to add:**
+```bash
+npm install --save-dev @typescript-eslint/typescript-estree
 ```
 
 ---
@@ -665,13 +915,66 @@ export class ScaffoldService {
 |---|---|---|---|
 | `gamma:sessions` | Hash | — | windowId → WindowSession JSON |
 | `gamma:sse:<windowId>` | Stream | 1h | Per-window SSE event stream |
-| `gamma:sse:broadcast` | Stream | 1h | Global: component_ready, etc. |
-| `gamma:memory:bus` | Stream | 24h | All thoughts + tool calls |
+| `gamma:sse:broadcast` | Stream | 1h | Global: component_ready, gateway_status |
+| `gamma:memory:bus` | Stream | 24h | All thoughts + tool calls (with stepId/parentId) |
 | `gamma:app:registry` | Hash | — | appId → modulePath (generated) |
+| `gamma:state:<windowId>` | Hash | 4h | **v1.2** Live state snapshot for F5 recovery |
 
 ---
 
-## 11. Environment Variables
+## 11. CORS & Security Policy (v1.2)
+
+### 11.1 Fastify CORS Configuration
+
+```typescript
+// src/main.ts
+import Fastify from "fastify";
+import cors from "@fastify/cors";
+
+const app = await NestFactory.create<NestFastifyApplication>(
+  AppModule,
+  new FastifyAdapter(),
+);
+
+// Allow EventSource + fetch from Vite dev server and production origins
+await app.register(cors, {
+  origin: [
+    "http://localhost:5173",          // Vite dev server
+    "http://127.0.0.1:5173",
+    "http://192.168.0.100:5173",      // LAN access
+    "http://100.123.78.76:5173",      // Tailscale IP
+    "https://sputniks-mac-mini.tailcde006.ts.net",  // Tailscale hostname
+  ],
+  methods: ["GET", "POST", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "Cache-Control"],
+  // EventSource requires credentials=omit by default; 
+  // set credentials:true only if using cookie auth
+  credentials: false,
+});
+
+// SSE requires no Content-Type buffering — disable Fastify compression for /api/stream
+app.register(import("@fastify/compress"), {
+  encodings: ["gzip"],
+  // Exclude SSE routes from compression (breaks streaming)
+  customTypes: /^application\//,
+});
+
+await app.listen(3001, "0.0.0.0");
+```
+
+### 11.2 Security Notes
+
+| Concern | Mitigation |
+|---|---|
+| Gateway token exposure | Stored only server-side in `.env`; never sent to browser |
+| Redis exposure | Bind Redis to `127.0.0.1` only (`bind 127.0.0.1` in redis.conf) |
+| Scaffold path traversal | `appId.replace(/[^a-z0-9-]/gi, "")` sanitizes before file write |
+| Generated code execution | `validateSource()` runs before disk write; no eval() used |
+| CORS for SSE | Explicit origin allowlist; no wildcard `*` |
+
+---
+
+## 12. Environment Variables
 
 ```env
 OPENCLAW_GATEWAY_URL=ws://localhost:18789
@@ -690,7 +993,7 @@ GIT_AUTHOR_EMAIL=zmrser@gmail.com
 
 ---
 
-## 12. NestJS Module Structure
+## 13. NestJS Module Structure
 
 ```
 gamma-os-server/
@@ -723,7 +1026,7 @@ gamma-os-server/
 
 ---
 
-## 13. Implementation Order
+## 14. Implementation Order
 
 | Priority | Module | Estimated effort |
 |---|---|---|
@@ -738,5 +1041,11 @@ gamma-os-server/
 | P1 | FS watcher (hot-reload fallback) | 0.5 day |
 | P2 | Frontend dynamic import registry | 1 day |
 | P2 | Memory bus visualization (Gamma OS UI panel) | 1 day |
+| P2 | **v1.2** Session sync endpoint + Redis state hash | 0.5 day |
+| P2 | **v1.2** SSE keep-alive + gateway_status events | 0.5 day |
+| P2 | **v1.2** Scaffold code validation (AST parse) | 0.5 day |
+| P2 | **v1.2** Memory bus parentId/stepId hierarchy | 0.5 day |
+| P2 | **v1.2** CORS policy + Fastify config | 0.5 day |
+| P2 | **v1.2** Frontend sync-on-mount in useAgentStream | 0.5 day |
 
-**Total Phase 2 estimate: ~9 developer-days**
+**Total Phase 2 estimate: ~11.5 developer-days** (+2.5 days for v1.2 resilience layer)
