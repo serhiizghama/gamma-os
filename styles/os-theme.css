@@ -88,12 +88,6 @@
   100% { background-position: 0% 50%; }
 }
 
-/* Slow color-hue cycle on the entire blob layer */
-@keyframes hueShift {
-  0%   { filter: hue-rotate(0deg); }
-  50%  { filter: hue-rotate(30deg); }
-  100% { filter: hue-rotate(0deg); }
-}
 
 /* ── Live Background ─────────────────────────────────────────── */
 .live-bg {
@@ -114,11 +108,10 @@
   overflow: hidden;
 }
 
-/* Blob container — hue shifts slowly for color life */
+/* Blob container */
 .live-bg__blobs {
   position: absolute;
   inset: 0;
-  animation: hueShift 45s ease-in-out infinite;
 }
 
 .live-bg__blob {
