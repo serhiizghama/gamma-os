@@ -1,7 +1,8 @@
 # Gamma OS — Phase 2: Backend Integration Specification
-**Version:** 1.3  
-**Status:** Draft  
+**Version:** 1.4  
+**Status:** Ready for Implementation  
 **Audience:** Senior Backend Developer (NestJS + Redis)  
+**Changelog v1.4:** Management & Health — app deletion (unscaffold), system health endpoint (CPU/RAM/Redis/Gateway), tokenUsage in lifecycle_end, path jail guard for scaffold writes.  
 **Changelog v1.3:** Resilience & Control — agent interruption (abort endpoint), stream throttling/batching, scaffold asset support + static serving, security linting in validateSource, tool result timeout (30s watchdog).  
 **Changelog v1.2:** Production-grade resilience additions — session recovery (F5 sync), scaffold code validation, memory bus hierarchy (decision tree), SSE keep-alive + gateway_status, CORS policy.  
 **Changelog v1.1:** Enhanced streaming architecture based on openclaw-studio analysis — phase-aware event bridge, thinking/tool/lifecycle stream types, frontend Zustand state model.
@@ -130,7 +131,21 @@ export interface GWChatEventPayload {
 export type GammaSSEEvent =
   // ── Lifecycle ──────────────────────────────────────────────────────────
   | { type: "lifecycle_start"; windowId: string; runId: string }
-  | { type: "lifecycle_end";   windowId: string; runId: string; stopReason?: string }
+  | {
+      type: "lifecycle_end";
+      windowId: string;
+      runId: string;
+      stopReason?: string;
+      /** v1.4: Token consumption for the completed run */
+      tokenUsage?: {
+        inputTokens: number;
+        outputTokens: number;
+        cacheReadTokens: number;
+        cacheWriteTokens: number;
+        /** contextUsedPct: outputTokens / modelContextWindow * 100 */
+        contextUsedPct: number;
+      };
+    }
   | { type: "lifecycle_error"; windowId: string; runId: string; message: string }
 
   // ── Thinking / Extended Reasoning ─────────────────────────────────────
@@ -144,7 +159,8 @@ export type GammaSSEEvent =
   | { type: "tool_result"; windowId: string; runId: string; name: string; toolCallId: string; result: unknown; isError: boolean }
 
   // ── Scaffolding ────────────────────────────────────────────────────────
-  | { type: "component_ready"; appId: string; modulePath: string }
+  | { type: "component_ready";   appId: string; modulePath: string }
+  | { type: "component_removed"; appId: string }                     // ← v1.4
 
   // ── Error ──────────────────────────────────────────────────────────────
   | { type: "error"; windowId: string; message: string };
@@ -271,9 +287,11 @@ GET    /api/sessions/:windowId/sync    ← v1.2: F5 recovery snapshot
 POST   /api/sessions/:windowId/abort   ← v1.3: Interrupt running agent
 GET    /api/stream/:windowId           SSE stream (text/event-stream)
 POST   /api/scaffold                   Scaffold a new app component
+DELETE /api/scaffold/:appId            ← v1.4: Remove generated app + assets
 GET    /api/assets/:appId/*            ← v1.3: Serve scaffold static assets
 GET    /api/memory-bus                 SSE stream of all memory bus entries
 GET    /api/sessions                   List active window→session mappings
+GET    /api/system/health              ← v1.4: CPU / RAM / Redis / Gateway metrics
 ```
 
 ### 4.1 Session Sync Endpoint (v1.2)
@@ -516,8 +534,19 @@ private async handleAgentEvent(payload: GWAgentEventPayload) {
         type: "lifecycle_start", windowId, runId,
       });
     } else if (phase === "end") {
+      // v1.4: Extract tokenUsage from Gateway payload if available
+      const usage = data as Record<string, unknown>;
+      const tokenUsage = (usage?.inputTokens != null) ? {
+        inputTokens:       Number(usage.inputTokens ?? 0),
+        outputTokens:      Number(usage.outputTokens ?? 0),
+        cacheReadTokens:   Number(usage.cacheReadTokens ?? 0),
+        cacheWriteTokens:  Number(usage.cacheWriteTokens ?? 0),
+        contextUsedPct:    Number(usage.contextUsedPct ?? 0),
+      } : undefined;
+
       await this.pushSSE(streamKey, {
         type: "lifecycle_end", windowId, runId, stopReason: "stop",
+        ...(tokenUsage ? { tokenUsage } : {}),
       });
     } else if (phase === "error") {
       await this.pushSSE(streamKey, {
@@ -1321,6 +1350,195 @@ npm install --save-dev @typescript-eslint/typescript-estree
 npm install @fastify/static
 ```
 
+### 9.5 Path Jail Guard (v1.4)
+
+All scaffold file writes are **jailed** to `apps/generated/`. The service must reject any path that escapes this boundary — protecting `src/`, `node_modules/`, `.env`, and other project files.
+
+```typescript
+// src/scaffold/scaffold.service.ts — path jail utility
+private readonly JAIL_ROOT = path.resolve(GAMMA_OS_REPO, "apps/generated");
+
+/**
+ * Resolves a relative path and verifies it stays within JAIL_ROOT.
+ * Throws if path traversal is attempted.
+ */
+private jailPath(relativePath: string): string {
+  const resolved = path.resolve(this.JAIL_ROOT, relativePath);
+
+  if (!resolved.startsWith(this.JAIL_ROOT + path.sep) &&
+      resolved !== this.JAIL_ROOT) {
+    throw new ForbiddenException(
+      `Path traversal attempt blocked: '${relativePath}' resolves outside jail`
+    );
+  }
+  return resolved;
+}
+```
+
+Apply to every write operation:
+
+```typescript
+// Source file
+const filePath = this.jailPath(`${pascal(safeId)}App.tsx`);
+
+// Asset files
+for (const asset of req.files ?? []) {
+  const assetPath = this.jailPath(`assets/${safeId}/${path.basename(asset.path)}`);
+  // ...write
+}
+```
+
+**Protected paths** (blocked by jail):
+- `../../src/main.tsx`
+- `../../../.env`
+- `node_modules/malicious-package/index.js`
+- Any absolute path (`/etc/passwd`, etc.)
+
+### 9.6 App Deletion — Unscaffold (v1.4)
+
+```typescript
+// src/scaffold/scaffold.controller.ts
+@Delete(":appId")
+async remove(@Param("appId") appId: string): Promise<{ ok: boolean }> {
+  return this.scaffoldService.remove(appId);
+}
+```
+
+```typescript
+// src/scaffold/scaffold.service.ts
+async remove(appId: string): Promise<{ ok: boolean }> {
+  const safeId   = appId.replace(/[^a-z0-9-]/gi, "");
+  const fileName = `${pascal(safeId)}App.tsx`;
+
+  // Jail-checked paths
+  const filePath  = this.jailPath(fileName);
+  const assetsDir = this.jailPath(`assets/${safeId}`);
+
+  // Remove source file
+  try { await fs.unlink(filePath); } catch { /* already gone */ }
+
+  // Remove asset directory
+  try { await fs.rm(assetsDir, { recursive: true, force: true }); } catch { /* ok */ }
+
+  // Git: stage removal and commit
+  await this.git.rm([filePath]).catch(() => {});
+  const hasChanges = (await this.git.status()).files.length > 0;
+  if (hasChanges) {
+    await this.git.commit(
+      `chore: remove generated ${safeId} app`,
+      { "--author": `${GIT_AUTHOR_NAME} <${GIT_AUTHOR_EMAIL}>` }
+    );
+  }
+
+  // Remove from app registry
+  await this.redis.hdel("gamma:app:registry", safeId);
+
+  // Broadcast removal so Launchpad removes the icon without page reload
+  await this.redis.xadd("gamma:sse:broadcast", "*",
+    ...flattenEntry({ type: "component_removed", appId: safeId })
+  );
+
+  return { ok: true };
+}
+```
+
+**Frontend — handle `component_removed`:**
+```typescript
+// In the dynamic app registry:
+eventSource.onmessage = (e) => {
+  const event = JSON.parse(e.data);
+  if (event.type === "component_removed") {
+    appRegistry.delete(event.appId);        // Remove from registry
+    launchpadStore.removeApp(event.appId);  // Remove Launchpad icon
+    // If a window of this app is open: show "App was removed" state
+  }
+};
+```
+
+---
+
+## 15. System Health Endpoint (v1.4)
+
+```typescript
+// src/system/system.controller.ts
+@Controller("api/system")
+export class SystemController {
+  @Get("health")
+  async health(): Promise<SystemHealthReport> {
+    const [redisOk, redisLatencyMs] = await this.pingRedis();
+    const [gwOk,    gwLatencyMs]    = await this.pingGateway();
+    const { cpuPct, ramUsedMb, ramTotalMb } = await this.getSystemMetrics();
+
+    return {
+      ts: Date.now(),
+      status: redisOk && gwOk ? "ok" : "degraded",
+      cpu: { usagePct: cpuPct },
+      ram: { usedMb: ramUsedMb, totalMb: ramTotalMb, usedPct: Math.round(ramUsedMb / ramTotalMb * 100) },
+      redis: { connected: redisOk, latencyMs: redisLatencyMs },
+      gateway: { connected: gwOk, latencyMs: gwLatencyMs },
+    };
+  }
+
+  private async pingRedis(): Promise<[boolean, number]> {
+    const t0 = Date.now();
+    try {
+      await this.redis.ping();
+      return [true, Date.now() - t0];
+    } catch { return [false, -1]; }
+  }
+
+  private async pingGateway(): Promise<[boolean, number]> {
+    const t0 = Date.now();
+    try {
+      const res = await fetch(`http://localhost:${GW_PORT}/ping`, {
+        headers: { Authorization: `Bearer ${process.env.OPENCLAW_GATEWAY_TOKEN}` },
+        signal: AbortSignal.timeout(2000),
+      });
+      return [res.ok, Date.now() - t0];
+    } catch { return [false, -1]; }
+  }
+
+  private async getSystemMetrics() {
+    // macOS: use `vm_stat` + `sysctl` via execa for accurate M4 metrics
+    const [vmStat, cpuLoad] = await Promise.all([
+      execa("vm_stat"),
+      execa("sysctl", ["-n", "vm.loadavg"]),
+    ]);
+
+    // Parse page counts → MB
+    const pageSize = 16384; // macOS M4 page = 16 KB
+    const freePages    = parseInt(vmStat.stdout.match(/Pages free:\s+(\d+)/)?.[1] ?? "0");
+    const activePages  = parseInt(vmStat.stdout.match(/Pages active:\s+(\d+)/)?.[1] ?? "0");
+    const wiredPages   = parseInt(vmStat.stdout.match(/Pages wired down:\s+(\d+)/)?.[1] ?? "0");
+    const totalMb      = 16384; // Mac Mini M4 = 16 GB unified memory
+    const usedMb       = Math.round((activePages + wiredPages) * pageSize / 1024 / 1024);
+
+    // CPU: 1-min load average as proxy for usage %
+    const loadAvg = parseFloat(cpuLoad.stdout.trim().replace(/[{}]/g, "").split(" ")[0] ?? "0");
+    const cpuPct  = Math.min(Math.round(loadAvg * 100 / 10), 100); // normalize
+
+    return { cpuPct, ramUsedMb: usedMb, ramTotalMb: totalMb };
+  }
+}
+```
+
+Response schema:
+```typescript
+export interface SystemHealthReport {
+  ts: number;
+  status: "ok" | "degraded" | "error";
+  cpu:     { usagePct: number };
+  ram:     { usedMb: number; totalMb: number; usedPct: number };
+  redis:   { connected: boolean; latencyMs: number };
+  gateway: { connected: boolean; latencyMs: number };
+}
+```
+
+**Usage in frontend:**
+- Poll `GET /api/system/health` every 30s
+- Show a subtle status bar in Gamma OS menu bar: 🟢 OK / 🟡 Degraded / 🔴 Error
+- On degraded: show which component is down (Redis? Gateway?)
+
 ---
 
 ## 10. Redis Key Schema
@@ -1427,11 +1645,14 @@ gamma-os-server/
 │   │   ├── stream-batcher.ts          # ← v1.3: 50ms token batcher
 │   │   └── sse.module.ts
 │   ├── scaffold/
-│   │   ├── scaffold.controller.ts
-│   │   ├── scaffold.service.ts        # validateSource + security scan ← v1.3
+│   │   ├── scaffold.controller.ts     # DELETE /:appId ← v1.4
+│   │   ├── scaffold.service.ts        # validateSource + security scan + jail guard ← v1.3/v1.4
 │   │   ├── scaffold-assets.controller.ts  # ← v1.3: GET /api/assets/:appId/*
 │   │   ├── scaffold-watcher.service.ts
 │   │   └── scaffold.module.ts
+│   ├── system/
+│   │   ├── system.controller.ts       # ← v1.4: GET /api/system/health
+│   │   └── system.module.ts
 │   ├── memory-bus/
 │   │   ├── memory-bus.service.ts
 │   │   └── memory-bus.module.ts
@@ -1469,5 +1690,24 @@ gamma-os-server/
 | P2 | **v1.3** Scaffold asset upload + static serving | 0.5 day |
 | P2 | **v1.3** Security linting (8 deny patterns) | 0.25 day |
 | P2 | **v1.3** Tool result watchdog (30s timeout) | 0.5 day |
+| P2 | **v1.4** App deletion + component_removed broadcast | 0.5 day |
+| P2 | **v1.4** System health endpoint (CPU/RAM/Redis/GW) | 0.5 day |
+| P2 | **v1.4** tokenUsage in lifecycle_end event | 0.25 day |
+| P2 | **v1.4** Path jail guard for all scaffold writes | 0.25 day |
 
-**Total Phase 2 estimate: ~14 developer-days** (+2.5 days for v1.3 resilience & control layer)
+**Total Phase 2 estimate: ~15.5 developer-days**  
+*(+1.5 days for v1.4 management & health layer)*
+
+---
+
+## 16. Specification Summary
+
+| Version | Theme | Key Additions |
+|---|---|---|
+| v1.0 | Foundation | WS bridge, Redis Streams, SSE, basic session CRUD |
+| v1.1 | Live Streaming | Phase-aware events (thinking/tool/lifecycle), frontend reducer |
+| v1.2 | Resilience | F5 sync, code validation, memory hierarchy, keep-alive, CORS |
+| v1.3 | Control | Abort, stream batching, asset scaffold, security linting, tool timeout |
+| v1.4 | Management | App deletion, system health, tokenUsage, path jail |
+
+**This specification is now feature-complete. Next step: NestJS boilerplate generation.**
