@@ -1,5 +1,5 @@
 # Gamma OS — Phase 3 Implementation Plan
-**Based on:** Frontend & Multi-Agent Architecture Specification v1.2.1  
+**Based on:** Frontend & Multi-Agent Architecture Specification v1.3  
 **Status:** Ready to execute  
 **Execution model:** Loop-by-loop, task-by-task. Verify each task before proceeding to the next.
 
@@ -112,6 +112,7 @@ web/vite.config.ts      ← update resolve.alias
   - `hasAgent: boolean` — `true` if `agentPrompt` was provided
   - `updatedAt: number` — timestamp, used as React key for hot-reload
 - Update `modulePath` to point inside the bundle: `"./web/apps/generated/weather/WeatherApp"`
+- **v1.3 — PATCH/Merge Semantics:** If `contextDoc` or `agentPrompt` is `undefined` in the request, the existing file on disk MUST be preserved (not deleted, not overwritten with empty). Only `sourceCode` is always required. This is critical for App Owner updates where the agent sends code + context but NOT its own persona.
 
 **Acceptance criteria:**
 - `POST /api/scaffold { appId: "weather", sourceCode: "...", contextDoc: "...", agentPrompt: "..." }` → creates:
@@ -122,6 +123,8 @@ web/vite.config.ts      ← update resolve.alias
 - Redis `gamma:app:registry` → entry includes `bundlePath`, `hasAgent: true`, `updatedAt`
 - Scaffolding without `contextDoc` and `agentPrompt` still works (backward compatible)
 - Calling scaffold again for the same `appId` updates `updatedAt` (for hot-reload)
+- **PATCH test:** Scaffold with all three files, then scaffold again with only `sourceCode` + `contextDoc` (no `agentPrompt`) → `agent-prompt.md` is preserved on disk, unchanged
+- **PATCH test:** Scaffold with only `sourceCode` (no `contextDoc`, no `agentPrompt`) → both `.md` files preserved
 - All existing tests still pass, 0 TS errors
 
 **Key spec reference:** Phase 3 §2.2 (Bundle Structure), §2.5 (Bundle Registration), §5.2–§5.4 (Updated Pipeline)
@@ -364,7 +367,7 @@ web/store/useOSStore.ts             ← per-window agent panel state
   - Send via `POST /api/sessions/app-owner-{appId}/send`
 - Implement the **Full Remount** hot-reload strategy:
   - Create `DynamicAppRenderer` component
-  - Use `import(/* @vite-ignore */ modulePath)` for dynamic loading
+  - **v1.3 — Vite-safe dynamic import:** Use a strongly-typed template literal anchored to the generated directory: `` import(`../../apps/generated/${appId}/${PascalId}App.tsx?t=${entry.updatedAt}`) ``. Do NOT use `/* @vite-ignore */` or fully dynamic paths — Rollup cannot statically analyze those and will fail in production builds.
   - Render with `<Component key={entry.updatedAt} />` — forces unmount/mount on update
   - On `component_ready` SSE event: update `updatedAt` in app registry store
 - Ensure `useAppStorage` hooks in generated apps re-hydrate from Redis on remount (user data survives code updates)
@@ -420,7 +423,7 @@ Before marking Phase 3 complete, verify:
 
 | Document | Location |
 |---|---|
-| Phase 3 Spec v1.2.1 | `docs/PHASE3_FRONTEND_AND_AGENTS.md` |
+| Phase 3 Spec v1.3 | `docs/PHASE3_FRONTEND_AND_AGENTS.md` |
 | Phase 2 Backend Spec v1.6 | `docs/PHASE2_BACKEND_SPEC.md` |
 | Phase 2 Implementation Plan | `docs/IMPLEMENTATION_PLAN.md` |
 | This Plan | `docs/IMPLEMENTATION_PLAN_PHASE3.md` |

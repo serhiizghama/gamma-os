@@ -1,8 +1,9 @@
 # Gamma OS — Phase 3: Frontend & Multi-Agent Architecture
-**Version:** 1.2.1  
+**Version:** 1.3  
 **Status:** Draft — Ready for Review  
 **Audience:** Senior Frontend Developer (React), Agent Architect  
 **Depends on:** Phase 2 Backend Integration Specification v1.6  
+**Changelog v1.3:** Resolved tool naming contradiction — App Owner uses `update_app` tool (translated to `POST /api/scaffold` by backend). Scaffold acts as PATCH/Merge — omitted fields preserve existing files. Fixed Vite dynamic import to use strongly-typed template literal for generated directory.  
 **Changelog v1.2.1:** Security fix — context injection in §6.1 must use `scaffoldService.jailPath()` for all file reads, preventing path traversal when reading `agent-prompt.md`, `context.md`, and source code.  
 **Changelog v1.2:** Fixed unscaffold memory leaks (app data + App Owner session cleanup on delete). Defined Vite alias for `@gamma/os` module resolution. Resolved Hot-Reload strategy: Full Remount with dynamic key (not Fast Refresh).  
 **Changelog v1.1:** English-only token constraints for AI context files (`context.md`, `agent-prompt.md`). OS-level App Storage API (`useAppStorage` hook + Redis persistence) replacing blocked `localStorage`.  
@@ -526,7 +527,38 @@ export interface ScaffoldRequest {
 }
 ```
 
-### 5.4 Bundle Directory Layout After Scaffold
+### 5.4 Scaffold PATCH/Merge Semantics (v1.3)
+
+`POST /api/scaffold` acts as a **PATCH/Merge** operation for existing bundles:
+
+| Field | Provided | Behavior |
+|---|---|---|
+| `sourceCode` | ✅ present | Overwrite `{AppId}App.tsx` |
+| `sourceCode` | ❌ omitted | **Error** — sourceCode is always required |
+| `contextDoc` | ✅ present | Overwrite `context.md` |
+| `contextDoc` | ❌ omitted/undefined | **Preserve** existing `context.md` on disk |
+| `agentPrompt` | ✅ present | Overwrite `agent-prompt.md` |
+| `agentPrompt` | ❌ omitted/undefined | **Preserve** existing `agent-prompt.md` on disk |
+| `files` | ✅ present | Write/overwrite assets |
+| `files` | ❌ omitted | **Preserve** existing assets |
+
+**Implementation logic:**
+```typescript
+// In ScaffoldService.scaffold() — only write if provided
+if (req.contextDoc !== undefined) {
+  const contextPath = this.jailPath(`${safeId}/context.md`);
+  await fs.writeFile(contextPath, req.contextDoc, 'utf8');
+}
+
+if (req.agentPrompt !== undefined) {
+  const promptPath = this.jailPath(`${safeId}/agent-prompt.md`);
+  await fs.writeFile(promptPath, req.agentPrompt, 'utf8');
+}
+```
+
+This is critical for App Owner updates — the App Owner sends `sourceCode` + `contextDoc` but omits `agentPrompt`, preserving its own persona file.
+
+### 5.5 Bundle Directory Layout After Scaffold
 
 ```
 web/apps/generated/
@@ -642,15 +674,18 @@ async sendAppOwnerMessage(appId: string, windowId: string, message: string): Pro
 
 ### 6.2 App Owner Response Handling
 
-When the App Owner agent responds with a code modification, it calls `scaffold` with the updated `sourceCode` and `contextDoc`. The flow:
+When the App Owner agent responds with a code modification, it calls the `update_app` tool (v1.3: NOT `scaffold` — this prevents the App Owner from hallucinating the creation of new apps). The backend translates `update_app` to the same `POST /api/scaffold` endpoint.
+
+**v1.3 — Partial Update (PATCH/Merge) Semantics:**  
+When `POST /api/scaffold` is called for an **existing** app, omitted fields preserve existing files on disk. If `agentPrompt` is `undefined`, the existing `agent-prompt.md` is untouched. The App Owner typically sends `sourceCode` + `contextDoc` but NOT `agentPrompt` (it shouldn't overwrite its own persona).
 
 ```
 App Owner agent receives enriched message
   → Reads current code + context
   → Generates modified WeatherApp.tsx
   → Generates updated context.md (adds design decision entry)
-  → Calls scaffold tool with { appId: "weather", sourceCode: "...", contextDoc: "..." }
-  → ScaffoldService overwrites files in the bundle
+  → Calls update_app tool with { appId: "weather", sourceCode: "...", contextDoc: "..." }
+  → Backend translates to POST /api/scaffold (PATCH/Merge — agentPrompt untouched)
   → Git commit: "refactor: updated Weather App — added humidity display"
   → SSE: component_ready
   → React hot-reloads the component in the user's window
@@ -678,13 +713,21 @@ function DynamicAppRenderer({ appId }: { appId: string }) {
   const entry = registry[appId];
   const [Component, setComponent] = useState<React.ComponentType | null>(null);
 
+  // v1.3: Use strongly-typed template literal pointing to the generated directory.
+  // Vite/Rollup cannot statically analyze fully dynamic import() paths.
+  // By anchoring the path to `../../apps/generated/`, Vite knows which directory
+  // to watch and serve. The `?t=` cache-bust param forces re-fetch on updates.
+  const pascal = (id: string) =>
+    id.replace(/[-_]+(.)/g, (_, c: string) => c.toUpperCase())
+      .replace(/^(.)/, (_, c: string) => c.toUpperCase());
+
   useEffect(() => {
     if (!entry) return;
-    // Dynamic import with cache-bust via timestamp
-    import(/* @vite-ignore */ `${entry.modulePath}.tsx?t=${entry.updatedAt}`)
+    const PascalId = pascal(appId);
+    import(`../../apps/generated/${appId}/${PascalId}App.tsx?t=${entry.updatedAt}`)
       .then((mod) => setComponent(() => mod.default ?? mod[Object.keys(mod)[0]]))
       .catch(console.error);
-  }, [entry?.modulePath, entry?.updatedAt]);
+  }, [appId, entry?.updatedAt]);
 
   if (!Component || !entry) return null;
 
@@ -755,7 +798,7 @@ Agents receive different tool sets based on their role:
 - `read_file` — read any file in the project (read-only)
 
 **App Owner tools:**
-- `update_app` — modify source code + context (scoped to own app)
+- `update_app` — modify source code + context (scoped to own app). **v1.3:** This is intentionally NOT named `scaffold` — the App Owner must not believe it can create new apps. The backend translates `update_app` → `POST /api/scaffold` with PATCH/Merge semantics (omitted fields preserve existing files).
 - `read_context` — read current context.md
 - `list_assets` — list assets in own bundle
 - `add_asset` — add asset to own bundle
