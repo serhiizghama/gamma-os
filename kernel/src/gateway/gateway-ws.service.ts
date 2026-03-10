@@ -275,6 +275,7 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
 
     // Runtime events (spec §5.2)
     if (frame.type === 'event' && frame.event) {
+      this.logger.log(`WS event: ${frame.event} (seq=${frame.seq ?? '?'})`);
       const kind = classifyGatewayEventKind(frame.event);
 
       if (kind === 'runtime-agent') {
@@ -294,8 +295,20 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
   // ══════════════════════════════════════════════════════════════════════
 
   private async handleAgentEvent(payload: GWAgentEventPayload): Promise<void> {
-    const windowId = this.sessionToWindow.get(payload.sessionKey);
-    if (!windowId) return; // no mapping — ignore
+    // Gateway uses "agent:main:system-architect" format — normalize by stripping "agent:main:" prefix
+    let sessionKey = payload.sessionKey;
+    if (sessionKey.startsWith('agent:main:')) {
+      sessionKey = sessionKey.replace('agent:main:', '');
+    } else if (sessionKey.startsWith('agent:')) {
+      sessionKey = sessionKey.replace(/^agent:[^:]+:/, '');
+    }
+
+    this.logger.log(`agentEvent: sessionKey=${sessionKey} (raw=${payload.sessionKey}), stream=${payload.stream}`);
+    const windowId = this.sessionToWindow.get(sessionKey);
+    if (!windowId) {
+      this.logger.warn(`agentEvent: no window mapping for sessionKey=${sessionKey}, known keys: [${[...this.sessionToWindow.keys()].join(', ')}]`);
+      return;
+    }
 
     const { stream, data, runId } = payload;
     const sseKey = `gamma:sse:${windowId}`;
