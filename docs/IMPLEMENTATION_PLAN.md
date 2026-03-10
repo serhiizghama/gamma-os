@@ -1,5 +1,5 @@
 # Gamma OS — Phase 2 Implementation Plan
-**Based on:** Backend Integration Specification v1.5  
+**Based on:** Backend Integration Specification v1.6  
 **Status:** Ready to execute  
 **Execution model:** Loop-by-loop, task-by-task. Verify each task before proceeding to the next.
 
@@ -400,6 +400,63 @@ Redis key: `gamma:metrics:event_lag` — List, keep last 100 samples, no TTL.
 
 ---
 
+### Task 4.4 — User Input & Session Garbage Collection (v1.6)
+
+**What to build (three sub-tasks):**
+
+**4.4a — User Input Endpoint:**
+- `POST /api/sessions/:windowId/send` — accepts `{ message: string }`
+- Echoes user message into `gamma:sse:<windowId>` as `user_message` event (instant UI feedback)
+- Writes to `gamma:memory:bus` with `kind: "text"` for decision tree reconstruction
+- Calls `gatewayWsService.sendMessage(sessionKey, message)` to forward to OpenClaw
+- Updates `gamma:state:<windowId>.lastEventAt` for GC freshness tracking
+
+**4.4b — Explicit Gateway Session Kill:**
+- Update `DELETE /api/sessions/:windowId` to call `gatewayWsService.deleteSession(sessionKey)` before cleaning Redis
+- `deleteSession()` sends `{ type: "req", method: "sessions.delete", params: { sessionKey } }` frame to Gateway
+- Best-effort: 2s timeout, fire-and-forget if Gateway doesn't ack
+
+**4.4c — Session Garbage Collector:**
+- Install `@nestjs/schedule`
+- Create `session-gc.service.ts` with `@Cron(CronExpression.EVERY_HOUR)` decorator
+- Scan all sessions in `gamma:sessions` hash
+- For each, check `gamma:state:<windowId>.lastEventAt` — if older than `SESSION_GC_TTL_HOURS` (default 24h), call `sessionsService.remove(windowId)` which triggers the explicit Gateway kill
+- Log collected sessions count
+
+**New WS methods in `GatewayWsService`:**
+- `sendMessage(sessionKey, message)` — sends `sessions.send` frame, 5s ack timeout
+- `deleteSession(sessionKey)` — sends `sessions.delete` frame, 2s ack timeout
+
+**New env variable:**
+- `SESSION_GC_TTL_HOURS` — default `24`
+
+**Acceptance criteria:**
+- `POST /api/sessions/:windowId/send { message: "hello" }` → SSE delivers `user_message` event within 100ms → Gateway starts agent run → `lifecycle_start` + streaming events flow back
+- `DELETE /api/sessions/:windowId` → Gateway session is freed (verify via Gateway logs or session list)
+- Create a session, wait > `SESSION_GC_TTL_HOURS` (or set to 0 for testing) → GC cron kills it → session gone from Redis + Gateway
+- Kernel Monitor shows user message in the log feed
+
+**Key spec reference:** §4.3 (User Input v1.6), §4.4 (Session Lifecycle & GC v1.6), §5.1 (WS Client methods)
+
+**Files to create/update:**
+```
+kernel/src/sessions/
+├── sessions.controller.ts      ← add POST :windowId/send
+├── sessions.service.ts         ← update remove() with Gateway kill
+├── session-gc.service.ts       ← NEW: cron GC service
+└── sessions.module.ts          ← register ScheduleModule + GC service
+
+kernel/src/gateway/
+└── gateway-ws.service.ts       ← add sendMessage() + deleteSession()
+```
+
+**Dependencies to install:**
+```bash
+npm install @nestjs/schedule
+```
+
+---
+
 ## Loop 5 — Generative OS Extension (Scaffolding) (P1/P2)
 
 > **Goal:** Give the Architect Agent the ability to generate, extend, and remove OS applications at runtime.
@@ -531,7 +588,7 @@ Before marking Phase 2 complete, verify:
 - [ ] Loop 1: NestJS starts, connects to Redis, authenticates with Gateway
 - [ ] Loop 2: Sessions CRUD works, event bridge routes all 5 stream types correctly
 - [ ] Loop 3: SSE streams live, batching reduces re-renders, keep-alive fires every 15s
-- [ ] Loop 4: F5 restores live state, abort works, health endpoint returns valid metrics
+- [ ] Loop 4: F5 restores live state, abort works, health endpoint returns valid metrics, user input flows to agent, GC cleans orphaned sessions
 - [ ] Loop 5: Scaffold creates/deletes apps in nested Git repo, security scan blocks dangerous code, assets served correctly
 - [ ] Integration: Open Gamma OS, send a message in a window, see thinking + tool + text stream live
 - [ ] Edge cases: Gateway disconnect → reconnect, tool timeout, F5 mid-stream, abort in flight
@@ -542,7 +599,7 @@ Before marking Phase 2 complete, verify:
 
 | Document | Location |
 |---|---|
-| Backend Spec v1.5 | `docs/PHASE2_BACKEND_SPEC.md` |
+| Backend Spec v1.6 | `docs/PHASE2_BACKEND_SPEC.md` |
 | Frontend Architecture | `docs/SPEC.md` |
 | This Plan | `docs/IMPLEMENTATION_PLAN.md` |
 | Project README | `README.md` |

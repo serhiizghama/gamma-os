@@ -1,7 +1,8 @@
 # Gamma OS — Phase 2: Backend Integration Specification
-**Version:** 1.5  
+**Version:** 1.6  
 **Status:** Ready for Implementation  
 **Audience:** Senior Backend Developer (NestJS + Redis)  
+**Changelog v1.6:** User Input endpoint (`POST /api/sessions/:windowId/send`) — the missing "browser → agent" path. Session Lifecycle & Garbage Collection — explicit Gateway session kill on `DELETE`, background GC cron (hourly, 24h TTL) to prevent orphaned sessions from leaking Gateway memory on F5/tab close.  
 **Changelog v1.5:** Smart Commit Architecture — nested Git workspace for generated apps (decoupled from main repo), branch-specific commits (`SCAFFOLD_GIT_BRANCH`), optional auto-push to private remote, updated ScaffoldService with isolated Git context.  
 **Changelog v1.4:** Management & Health — app deletion (unscaffold), system health endpoint (CPU/RAM/Redis/Gateway), tokenUsage in lifecycle_end, path jail guard for scaffold writes.  
 **Changelog v1.3:** Resilience & Control — agent interruption (abort endpoint), stream throttling/batching, scaffold asset support + static serving, security linting in validateSource, tool result timeout (30s watchdog).  
@@ -282,8 +283,8 @@ export interface WindowStateSyncSnapshot {
 
 ```
 POST   /api/sessions                   Create window↔session mapping
-DELETE /api/sessions/:windowId         Destroy session
-POST   /api/sessions/:windowId/send    Send user message to agent
+DELETE /api/sessions/:windowId         Destroy session + kill Gateway session (v1.6)
+POST   /api/sessions/:windowId/send   ← v1.6: Send user message to agent
 GET    /api/sessions/:windowId/sync    ← v1.2: F5 recovery snapshot
 POST   /api/sessions/:windowId/abort   ← v1.3: Interrupt running agent
 GET    /api/stream/:windowId           SSE stream (text/event-stream)
@@ -418,6 +419,159 @@ case "lifecycle_error":
   };
 ```
 
+### 4.3 User Input Endpoint (v1.6)
+
+The system was missing the browser → agent path. This endpoint accepts a user message, forwards it to the OpenClaw Gateway via `sessions.send`, and provides instant UI feedback via SSE.
+
+```typescript
+// src/sessions/sessions.controller.ts
+@Post(":windowId/send")
+async send(
+  @Param("windowId") windowId: string,
+  @Body() body: { message: string },
+): Promise<{ ok: boolean }> {
+  const session = await this.sessionsService.findByWindowId(windowId);
+  if (!session) throw new NotFoundException(`No session for window ${windowId}`);
+
+  // 1. Immediately echo the user message into the SSE stream for instant UI feedback
+  await this.redis.xadd(`gamma:sse:${windowId}`, "*",
+    ...flattenEntry({
+      type: "user_message",
+      windowId,
+      text: body.message,
+      ts: Date.now(),
+    })
+  );
+
+  // 2. Write to memory bus for decision tree reconstruction
+  await this.redis.xadd("gamma:memory:bus", "*",
+    ...flattenEntry({
+      sessionKey: session.sessionKey,
+      windowId,
+      kind: "text",
+      content: body.message,
+      ts: Date.now(),
+    })
+  );
+
+  // 3. Forward to OpenClaw Gateway
+  await this.gatewayWsService.sendMessage(session.sessionKey, body.message);
+
+  // 4. Update lastEventAt for GC freshness tracking
+  await this.redis.hset(`gamma:state:${windowId}`, "lastEventAt", String(Date.now()));
+
+  return { ok: true };
+}
+```
+
+Add `user_message` to the `GammaSSEEvent` union type:
+```typescript
+| { type: "user_message"; windowId: string; text: string; ts: number }   // ← v1.6
+```
+
+Frontend handles `user_message` in the reducer:
+```typescript
+case "user_message":
+  return {
+    ...state,
+    outputLines: [...state.outputLines, `**You:** ${event.text}`],
+  };
+```
+
+### 4.4 Session Lifecycle & Garbage Collection (v1.6)
+
+**Problem:** When a user refreshes the page (F5) or closes a browser tab, the frontend `EventSource` disconnects silently. The backend SSE controller cleans up the Redis blocking connection — but the **OpenClaw Gateway session** stays alive in memory indefinitely. After many refreshes, the Gateway accumulates hundreds of orphaned sessions consuming RAM and context tokens.
+
+#### 4.4.1 Explicit Session Kill on DELETE
+
+`DELETE /api/sessions/:windowId` MUST send a `sessions.delete` frame to the OpenClaw Gateway to free the LLM session resources:
+
+```typescript
+// src/sessions/sessions.service.ts — updated remove()
+async remove(windowId: string): Promise<void> {
+  const session = await this.findByWindowId(windowId);
+  if (!session) return;
+
+  // 1. Kill the Gateway session (free LLM context memory)
+  await this.gatewayWsService.deleteSession(session.sessionKey);
+
+  // 2. Clean up Redis
+  await this.redis.hdel("gamma:sessions", windowId);
+  await this.redis.del(`gamma:sse:${windowId}`);
+  await this.redis.del(`gamma:state:${windowId}`);
+
+  // 3. Unregister from in-memory routing
+  this.gatewayWsService.unregisterWindowSession(session.sessionKey);
+}
+```
+
+#### 4.4.2 Session Garbage Collector (Background Cron)
+
+A `@nestjs/schedule` cron job runs **every hour** and kills sessions where `lastEventAt` is older than **24 hours** (configurable via `SESSION_GC_TTL_HOURS`). This catches sessions orphaned by F5 refreshes, tab closes, and network drops.
+
+```typescript
+// src/sessions/session-gc.service.ts
+import { Injectable, Logger } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+
+@Injectable()
+export class SessionGcService {
+  private readonly logger = new Logger(SessionGcService.name);
+  private readonly ttlMs: number; // SESSION_GC_TTL_HOURS * 3600 * 1000
+
+  /**
+   * Runs every hour. Scans all sessions in gamma:sessions, checks
+   * gamma:state:<windowId>.lastEventAt, and kills stale ones.
+   */
+  @Cron(CronExpression.EVERY_HOUR)
+  async collectGarbage(): Promise<void> {
+    const sessions = await this.redis.hgetall("gamma:sessions");
+    const now = Date.now();
+    let collected = 0;
+
+    for (const [windowId, raw] of Object.entries(sessions)) {
+      const session: WindowSession = JSON.parse(raw);
+
+      // Check lastEventAt from the state hash
+      const lastEventAt = await this.redis.hget(
+        `gamma:state:${windowId}`,
+        "lastEventAt",
+      );
+
+      const lastActivity = lastEventAt ? Number(lastEventAt) : session.createdAt;
+      const age = now - lastActivity;
+
+      if (age > this.ttlMs) {
+        this.logger.log(
+          `GC: killing orphaned session ${windowId} ` +
+          `(sessionKey=${session.sessionKey}, idle ${Math.round(age / 3600_000)}h)`,
+        );
+
+        // Kill Gateway session + clean Redis
+        await this.sessionsService.remove(windowId);
+        collected++;
+      }
+    }
+
+    if (collected > 0) {
+      this.logger.log(`GC: collected ${collected} orphaned session(s)`);
+    }
+  }
+}
+```
+
+**Redis key updates:**
+| Key | Change |
+|---|---|
+| `gamma:state:<windowId>` | `lastEventAt` updated on every user send + agent event (was already tracked) |
+
+**New environment variable:**
+| Variable | Default | Description |
+|---|---|---|
+| `SESSION_GC_TTL_HOURS` | `24` | Sessions idle longer than this are garbage collected (v1.6) |
+
+**New dependency:** `@nestjs/schedule` (for `@Cron` decorator)
+
 ---
 
 ## 5. OpenClaw Gateway WS Client
@@ -466,6 +620,46 @@ export class GatewayWsService implements OnModuleInit {
       body: JSON.stringify({ tool, args, sessionKey }),
     });
     return res.json();
+  }
+
+  // ── v1.6: User Input — send message to agent session ───────────────
+
+  async sendMessage(sessionKey: string, message: string): Promise<void> {
+    const frameId = ulid();
+    this.send({
+      type: "req",
+      id: frameId,
+      method: "sessions.send",
+      params: { sessionKey, message },
+    });
+
+    // Wait up to 5s for Gateway ack — the Gateway will then stream agent
+    // response events back through the existing WS → event bridge → SSE pipeline
+    try {
+      await this.waitForResponse(frameId, 5000);
+    } catch {
+      // Gateway may not ack synchronously — that's fine;
+      // the agent run will start and events will flow through the event bridge
+    }
+  }
+
+  // ── v1.6: Explicit Session Kill — free Gateway resources ───────────
+
+  async deleteSession(sessionKey: string): Promise<void> {
+    const frameId = ulid();
+    this.send({
+      type: "req",
+      id: frameId,
+      method: "sessions.delete",
+      params: { sessionKey },
+    });
+
+    try {
+      await this.waitForResponse(frameId, 2000);
+    } catch {
+      // Best-effort — if Gateway doesn't ack, the session will eventually
+      // be cleaned up by Gateway's own internal GC
+    }
   }
 }
 ```
@@ -1724,10 +1918,13 @@ GAMMA_OS_REPO=/path/to/gamma-os
 GIT_AUTHOR_NAME=serhiizghama
 GIT_AUTHOR_EMAIL=zmrser@gmail.com
 
-# ── Scaffold — Smart Commit (v1.5) ───────────────────────
+# ── Scaffold — Smart Commit (v1.5) ───────────────────
 SCAFFOLD_GIT_BRANCH=private-apps
 SCAFFOLD_AUTO_PUSH=false
 SCAFFOLD_PRIVATE_REPO_URL=
+
+# ── Session GC (v1.6) ────────────────────────────────────
+SESSION_GC_TTL_HOURS=24
 
 # ── Server ────────────────────────────────────────────────
 PORT=3001
@@ -1745,6 +1942,7 @@ PORT=3001
 | `SCAFFOLD_GIT_BRANCH` | `private-apps` | Branch for generated app commits in the nested repo (v1.5) |
 | `SCAFFOLD_AUTO_PUSH` | `false` | Auto-push to private remote after scaffold/delete (v1.5) |
 | `SCAFFOLD_PRIVATE_REPO_URL` | *(none)* | Remote URL for the nested generated apps repo (v1.5) |
+| `SESSION_GC_TTL_HOURS` | `24` | Sessions idle longer than this are garbage collected (v1.6) |
 | `PORT` | `3001` | HTTP server port |
 
 ---
@@ -1761,8 +1959,9 @@ kernel/
 │   │   ├── tool-watchdog.service.ts   # ← v1.3: 30s tool timeout watchdog
 │   │   └── gateway.module.ts
 │   ├── sessions/
-│   │   ├── sessions.controller.ts     # POST /abort ← v1.3
+│   │   ├── sessions.controller.ts     # POST /send ← v1.6, POST /abort ← v1.3
 │   │   ├── sessions.service.ts
+│   │   ├── session-gc.service.ts      # ← v1.6: Hourly orphan session garbage collector
 │   │   └── sessions.module.ts
 │   ├── sse/
 │   │   ├── sse.controller.ts          # GET /api/stream/:windowId
@@ -1820,9 +2019,12 @@ kernel/
 | P2 | **v1.4** Path jail guard for all scaffold writes | 0.25 day |
 | P1 | **v1.5** Nested Git repo init + branch management | 0.5 day |
 | P2 | **v1.5** Auto-push to private remote | 0.25 day |
+| P0 | **v1.6** User input endpoint (POST /send) | 0.5 day |
+| P1 | **v1.6** Explicit Gateway session kill on DELETE | 0.25 day |
+| P1 | **v1.6** Session Garbage Collector (hourly cron) | 0.5 day |
 
-**Total Phase 2 estimate: ~16.25 developer-days**  
-*(+1.5 days for v1.4 management & health layer, +0.75 days for v1.5 Smart Commit)*
+**Total Phase 2 estimate: ~17.5 developer-days**  
+*(+1.5 days for v1.4, +0.75 days for v1.5, +1.25 days for v1.6 user input & GC)*
 
 ---
 
@@ -1836,5 +2038,6 @@ kernel/
 | v1.3 | Control | Abort, stream batching, asset scaffold, security linting, tool timeout |
 | v1.4 | Management | App deletion, system health, tokenUsage, path jail |
 | v1.5 | Smart Commit | Nested Git workspace, branch isolation, auto-push to private remote |
+| v1.6 | User Input & GC | User message endpoint (browser→agent), explicit session kill, background GC cron |
 
 **This specification is feature-complete for Phase 2. Implementation is in progress.**
