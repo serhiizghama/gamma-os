@@ -18,6 +18,7 @@ async function bootstrap(): Promise<void> {
       'http://localhost:5173',
       'http://127.0.0.1:5173',
       'http://100.123.78.76:5173',
+      'http://sputniks-mac-mini.tailcde006.ts.net:5173',
       'https://sputniks-mac-mini.tailcde006.ts.net',
     ],
     methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
