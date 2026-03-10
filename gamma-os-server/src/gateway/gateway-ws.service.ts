@@ -9,14 +9,14 @@ import { ConfigService } from '@nestjs/config';
 import WebSocket from 'ws';
 import * as ed from '@noble/ed25519';
 import { ulid } from 'ulid';
+import { REDIS_KEYS } from '@gamma/types';
 import Redis from 'ioredis';
 import { REDIS_CLIENT } from '../redis/redis.constants';
 import {
   classifyGatewayEventKind,
   isReasoningStream,
 } from './event-classifier';
-import type { GWAgentEventPayload } from '@gamma/types';
-// REDIS_KEYS available from @gamma/types when needed
+import type { GWAgentEventPayload, WindowSession } from '@gamma/types';
 
 // ── Local types ───────────────────────────────────────────────────────────
 
@@ -67,6 +67,18 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
   // Session → Window mapping (populated externally by SessionsService)
   public sessionToWindow = new Map<string, string>();
 
+  /** Register a window↔session mapping in memory (spec: audit hotfix). */
+  public registerWindowSession(sessionKey: string, windowId: string): void {
+    if (!sessionKey || !windowId) return;
+    this.sessionToWindow.set(sessionKey, windowId);
+  }
+
+  /** Remove a window↔session mapping from memory. */
+  public unregisterWindowSession(sessionKey: string): void {
+    if (!sessionKey) return;
+    this.sessionToWindow.delete(sessionKey);
+  }
+
   // ── Hierarchy tracking for memory bus (spec §3.6) ──
   // Maps runId → { seq, lastThinkingStepId, toolCallStepIds }
   private runStepCounters = new Map<
@@ -102,6 +114,7 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
       this.logger.warn('OPENCLAW_GATEWAY_TOKEN not set — Gateway connection disabled');
       return;
     }
+    await this.loadExistingSessionsFromRedis();
     await this.connect();
   }
 
@@ -169,6 +182,9 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
     this.connected = false;
     this.closeWs();
 
+    // Clear run tracking to avoid orphaned counters when runs are interrupted
+    this.runStepCounters.clear();
+
     for (const [id, req] of this.pendingRequests) {
       clearTimeout(req.timer);
       req.reject(new Error('Gateway disconnected'));
@@ -179,6 +195,34 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
       this.broadcastGatewayStatus('disconnected');
     }
     this.scheduleReconnect();
+  }
+
+  // ── Restore session mappings on startup ────────────────────────────────
+
+  private async loadExistingSessionsFromRedis(): Promise<void> {
+    try {
+      const raw = await this.redis.hgetall(REDIS_KEYS.SESSIONS);
+      let restored = 0;
+
+      for (const json of Object.values(raw)) {
+        try {
+          const session = JSON.parse(json) as WindowSession;
+          if (session.sessionKey && session.windowId) {
+            this.sessionToWindow.set(session.sessionKey, session.windowId);
+            restored++;
+          }
+        } catch {
+          // Ignore malformed session entries
+        }
+      }
+
+      if (restored > 0) {
+        this.logger.log(`Restored ${restored} session mappings from Redis`);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Failed to restore session mappings from Redis: ${msg}`);
+    }
   }
 
   private scheduleReconnect(): void {

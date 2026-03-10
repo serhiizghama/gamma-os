@@ -1,13 +1,17 @@
 import { Injectable, Inject } from '@nestjs/common';
 import Redis from 'ioredis';
 import { REDIS_CLIENT } from '../redis/redis.constants';
+import { GatewayWsService } from '../gateway/gateway-ws.service';
 import type { WindowSession, CreateSessionDto } from './sessions.interfaces';
 
 const SESSIONS_KEY = 'gamma:sessions';
 
 @Injectable()
 export class SessionsService {
-  constructor(@Inject(REDIS_CLIENT) private readonly redis: Redis) {}
+  constructor(
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
+    private readonly gatewayWs: GatewayWsService,
+  ) {}
 
   /** Create a new window↔session mapping */
   async create(dto: CreateSessionDto): Promise<WindowSession> {
@@ -20,11 +24,10 @@ export class SessionsService {
       status: 'idle',
     };
 
-    await this.redis.hset(
-      SESSIONS_KEY,
-      dto.windowId,
-      JSON.stringify(session),
-    );
+    await this.redis.hset(SESSIONS_KEY, dto.windowId, JSON.stringify(session));
+
+    // Keep Gateway's in-memory mapping in sync so events can be routed
+    this.gatewayWs.registerWindowSession(dto.sessionKey, dto.windowId);
 
     return session;
   }
@@ -69,7 +72,14 @@ export class SessionsService {
 
   /** Remove a session mapping */
   async remove(windowId: string): Promise<boolean> {
+    const existing = await this.findByWindowId(windowId);
+    if (!existing) return false;
+
     const removed = await this.redis.hdel(SESSIONS_KEY, windowId);
-    return removed > 0;
+    if (removed > 0) {
+      this.gatewayWs.unregisterWindowSession(existing.sessionKey);
+      return true;
+    }
+    return false;
   }
 }

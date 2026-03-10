@@ -107,12 +107,17 @@ src/gateway/
 - `DELETE /api/sessions/:windowId` — destroy session, clean up Redis
 - `GET /api/sessions` — list all active sessions
 - `SessionsService` with `findByWindowId()` helper used by all other services
+- `GatewayWsService` in-memory routing:
+  - `registerWindowSession(sessionKey, windowId)` called from `SessionsService.create()`
+  - `unregisterWindowSession(sessionKey)` called from `SessionsService.remove()`
+  - On startup, `GatewayWsService` reads `gamma:sessions` and restores the `sessionKey → windowId` map so events can be routed immediately after a restart
 
 **Acceptance criteria:**
 - `POST /api/sessions { windowId, appId, sessionKey, agentId }` → `201 { ok: true }`
 - `GET /api/sessions` returns the created session
 - `DELETE /api/sessions/:windowId` → session gone from Redis
 - Redis key `gamma:sessions` contains the mapping as a JSON-serialized hash field
+- Gateway event bridge successfully routes agent events to `gamma:sse:<windowId>` using the restored in-memory map
 
 **Key spec reference:** §3.4 (WindowSession), §4 (API Surface)
 
