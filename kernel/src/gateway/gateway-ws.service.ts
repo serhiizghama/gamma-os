@@ -702,6 +702,8 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
         platform: 'macos',
         mode: 'backend',
       },
+      role: 'operator',
+      scopes: ['operator.admin'],
       auth: {
         token: this.gatewayToken,
       },
@@ -769,18 +771,23 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
   // ── v1.6: Send user message to agent session ─────────────────────────
 
   async sendMessage(sessionKey: string, message: string): Promise<void> {
+    if (!this.connected) {
+      this.logger.warn(`sendMessage: not connected, dropping message for ${sessionKey}`);
+      return;
+    }
     const frameId = ulid();
+    this.logger.log(`sendMessage: ${sessionKey} → ${message.slice(0, 60)}... (frame=${frameId})`);
     this.send({
       type: 'req',
       id: frameId,
-      method: 'sessions.send',
-      params: { sessionKey, message },
+      method: 'chat.send',
+      params: { sessionKey, message, idempotencyKey: frameId },
     });
     try {
-      await this.waitForResponse(frameId, 5000);
-    } catch {
-      // Gateway may not ack synchronously — agent run will start
-      // and events flow through the event bridge
+      const response = await this.waitForResponse(frameId, 10000);
+      this.logger.log(`sendMessage response: ${JSON.stringify(response).slice(0, 200)}`);
+    } catch (err) {
+      this.logger.warn(`sendMessage: no ack within timeout for ${sessionKey}: ${err}`);
     }
   }
 
