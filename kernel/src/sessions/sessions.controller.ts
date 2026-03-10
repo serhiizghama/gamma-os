@@ -10,8 +10,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { SessionsService } from './sessions.service';
-import type { WindowSession, CreateSessionDto } from './sessions.interfaces';
-import type { WindowStateSyncSnapshot } from '@gamma/types';
+import type { CreateSessionDto } from './sessions.interfaces';
+import type { WindowSession, WindowStateSyncSnapshot } from '@gamma/types';
 
 @Controller('api/sessions')
 export class SessionsController {
@@ -29,6 +29,19 @@ export class SessionsController {
   @Get()
   async findAll(): Promise<WindowSession[]> {
     return this.sessions.findAll();
+  }
+
+  @Post(':windowId/send')
+  @HttpCode(HttpStatus.OK)
+  async send(
+    @Param('windowId') windowId: string,
+    @Body() body: { message: string },
+  ): Promise<{ ok: boolean }> {
+    const sent = await this.sessions.sendMessage(windowId, body.message);
+    if (!sent) {
+      throw new NotFoundException(`No session for window ${windowId}`);
+    }
+    return { ok: true };
   }
 
   @Post(':windowId/abort')

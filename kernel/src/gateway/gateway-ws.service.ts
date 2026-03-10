@@ -763,6 +763,41 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
     } catch { /* fire-and-forget per spec */ }
   }
 
+  // ── v1.6: Send user message to agent session ─────────────────────────
+
+  async sendMessage(sessionKey: string, message: string): Promise<void> {
+    const frameId = ulid();
+    this.send({
+      type: 'req',
+      id: frameId,
+      method: 'sessions.send',
+      params: { sessionKey, message },
+    });
+    try {
+      await this.waitForResponse(frameId, 5000);
+    } catch {
+      // Gateway may not ack synchronously — agent run will start
+      // and events flow through the event bridge
+    }
+  }
+
+  // ── v1.6: Explicit session kill — free Gateway resources ────────────
+
+  async deleteSession(sessionKey: string): Promise<void> {
+    const frameId = ulid();
+    this.send({
+      type: 'req',
+      id: frameId,
+      method: 'sessions.delete',
+      params: { sessionKey },
+    });
+    try {
+      await this.waitForResponse(frameId, 2000);
+    } catch {
+      // Best-effort — if Gateway doesn't ack, its own GC will eventually clean up
+    }
+  }
+
   async invokeTool(
     tool: string,
     args: Record<string, unknown>,

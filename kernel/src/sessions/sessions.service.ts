@@ -1,5 +1,6 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, Logger } from '@nestjs/common';
 import Redis from 'ioredis';
+import { ulid } from 'ulid';
 import { REDIS_CLIENT } from '../redis/redis.constants';
 import { GatewayWsService } from '../gateway/gateway-ws.service';
 import type { WindowSession, CreateSessionDto } from './sessions.interfaces';
@@ -8,8 +9,20 @@ import type { AgentStatus, WindowStateSyncSnapshot } from '@gamma/types';
 
 const SESSIONS_KEY = 'gamma:sessions';
 
+/** Flatten an object to [key, value, key, value, ...] for XADD */
+function flattenEntry(obj: Record<string, unknown>): string[] {
+  const args: string[] = [];
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === undefined || v === null) continue;
+    args.push(k, typeof v === 'string' ? v : JSON.stringify(v));
+  }
+  return args;
+}
+
 @Injectable()
 export class SessionsService {
+  private readonly logger = new Logger(SessionsService.name);
+
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
     private readonly gatewayWs: GatewayWsService,
@@ -123,16 +136,72 @@ export class SessionsService {
     };
   }
 
-  /** Remove a session mapping */
+  // ── v1.6: Send user message to agent ──────────────────────────────────
+
+  async sendMessage(windowId: string, message: string): Promise<boolean> {
+    const session = await this.findByWindowId(windowId);
+    if (!session) return false;
+
+    const nowMs = Date.now();
+
+    // 1. Echo user message into SSE for instant UI feedback
+    await this.redis.xadd(
+      `gamma:sse:${windowId}`, '*',
+      ...flattenEntry({
+        type: 'user_message',
+        windowId,
+        text: message,
+        ts: nowMs,
+      }),
+    );
+
+    // 2. Write to memory bus for decision tree reconstruction
+    await this.redis.xadd(
+      'gamma:memory:bus', '*',
+      ...flattenEntry({
+        id: ulid(),
+        sessionKey: session.sessionKey,
+        windowId,
+        kind: 'text',
+        content: message,
+        ts: nowMs,
+      }),
+    );
+
+    // 3. Forward to OpenClaw Gateway
+    await this.gatewayWs.sendMessage(session.sessionKey, message);
+
+    // 4. Update lastEventAt for GC freshness tracking
+    await this.redis.hset(`gamma:state:${windowId}`, 'lastEventAt', String(nowMs));
+
+    return true;
+  }
+
+  /** Remove a session mapping (v1.6: explicit Gateway kill) */
   async remove(windowId: string): Promise<boolean> {
     const existing = await this.findByWindowId(windowId);
     if (!existing) return false;
 
-    const removed = await this.redis.hdel(SESSIONS_KEY, windowId);
-    if (removed > 0) {
-      this.gatewayWs.unregisterWindowSession(existing.sessionKey);
-      return true;
+    // 1. Kill the Gateway session to free LLM context memory
+    try {
+      await this.gatewayWs.deleteSession(existing.sessionKey);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Failed to kill Gateway session ${existing.sessionKey}: ${msg}`);
     }
-    return false;
+
+    // 2. Clean up Redis
+    await this.redis.hdel(SESSIONS_KEY, windowId);
+    await this.redis.del(`gamma:sse:${windowId}`);
+    await this.redis.del(`gamma:state:${windowId}`);
+
+    // 3. Clear watchdog timers
+    this.toolWatchdog.clearWindow(windowId);
+
+    // 4. Unregister from in-memory routing
+    this.gatewayWs.unregisterWindowSession(existing.sessionKey);
+
+    this.logger.log(`Removed session ${windowId} (sessionKey=${existing.sessionKey})`);
+    return true;
   }
 }

@@ -57,6 +57,8 @@ export type GammaSSEEvent =
   // Scaffolding
   | { type: 'component_ready'; appId: string; modulePath: string }
   | { type: 'component_removed'; appId: string }
+  // User input (v1.6)
+  | { type: 'user_message'; windowId: string; text: string; ts: number }
   // System
   | { type: 'gateway_status'; status: 'connected' | 'disconnected'; ts: number }
   | { type: 'keep_alive' }
