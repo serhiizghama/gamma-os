@@ -1417,9 +1417,11 @@ npm install --save-dev @typescript-eslint/typescript-estree
 npm install @fastify/static
 ```
 
-### 9.5 Path Jail Guard (v1.4)
+### 9.5 Path Jail Guard (v1.5.1)
 
 All scaffold file writes are **jailed** to `web/apps/generated/`. The service must reject any path that escapes this boundary — protecting `kernel/`, `web/src/`, `node_modules/`, `.env`, and other project files.
+
+**v1.5.1 Critical Fix:** With the nested Git repo living inside the jail root (`web/apps/generated/.git/`), the jail must also block **all hidden files and directories** (segments starting with `.`). Without this, a malicious scaffold request could overwrite `.git/config`, `.git/hooks/pre-commit`, or other internal Git files — potentially leading to remote code execution or credential theft.
 
 ```typescript
 // src/scaffold/scaffold.service.ts — path jail utility
@@ -1427,10 +1429,26 @@ private readonly JAIL_ROOT = path.resolve(GAMMA_OS_REPO, "web/apps/generated");
 
 /**
  * Resolves a relative path and verifies it stays within JAIL_ROOT.
- * Throws if path traversal is attempted.
+ * Blocks: upward traversal, absolute paths, hidden files/dirs (.git, .env, etc.)
+ * Throws ForbiddenException on any violation.
  */
-private jailPath(relativePath: string): string {
-  const resolved = path.resolve(this.JAIL_ROOT, relativePath);
+jailPath(relativePath: string): string {
+  // Reject absolute paths
+  if (path.isAbsolute(relativePath)) {
+    throw new ForbiddenException(
+      `Absolute path '${relativePath}' is forbidden`
+    );
+  }
+
+  // v1.5.1: Reject hidden files/directories (.git, .env, .DS_Store, etc.)
+  const normalized = path.normalize(relativePath);
+  if (normalized.split(path.sep).some(segment => segment.startsWith('.'))) {
+    throw new ForbiddenException(
+      `Hidden files and directories (.git, etc.) are strictly forbidden: '${relativePath}'`
+    );
+  }
+
+  const resolved = path.resolve(this.JAIL_ROOT, normalized);
 
   if (!resolved.startsWith(this.JAIL_ROOT + path.sep) &&
       resolved !== this.JAIL_ROOT) {
@@ -1456,9 +1474,14 @@ for (const asset of req.files ?? []) {
 ```
 
 **Protected paths** (blocked by jail):
-- `../../src/main.tsx`
-- `../../../.env`
-- `node_modules/malicious-package/index.js`
+- `../../src/main.tsx` — upward traversal
+- `../../../.env` — upward traversal
+- `.git/config` — **v1.5.1: nested Git tamper protection**
+- `.git/hooks/pre-commit` — **v1.5.1: nested Git tamper protection**
+- `.env` — hidden file
+- `.DS_Store` — hidden file
+- `assets/.hidden/payload` — hidden directory within assets
+- `node_modules/malicious-package/index.js` — upward traversal
 - Any absolute path (`/etc/passwd`, etc.)
 
 ### 9.6 App Deletion — Unscaffold (v1.4)

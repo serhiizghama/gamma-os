@@ -86,7 +86,16 @@ export class ScaffoldService {
       );
     }
 
-    const resolved = path.resolve(this.JAIL_ROOT, relativePath);
+    // Normalize and reject hidden files/directories (.git, .env, .DS_Store, etc.)
+    // This protects the nested .git repo from being overwritten by scaffold requests
+    const normalized = path.normalize(relativePath);
+    if (normalized.split(path.sep).some((segment) => segment.startsWith('.'))) {
+      throw new ForbiddenException(
+        `Hidden files and directories (.git, etc.) are strictly forbidden: '${relativePath}'`,
+      );
+    }
+
+    const resolved = path.resolve(this.JAIL_ROOT, normalized);
 
     if (
       resolved !== this.JAIL_ROOT &&

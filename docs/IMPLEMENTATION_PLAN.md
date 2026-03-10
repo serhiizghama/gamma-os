@@ -412,7 +412,8 @@ Redis key: `gamma:metrics:event_lag` — List, keep last 100 samples, no TTL.
 - `jailPath(relativePath: string): string` utility method in `ScaffoldService`
   - Resolves path, verifies it stays within `web/apps/generated/`
   - Throws `ForbiddenException` on traversal attempts
-- Security scan in `validateSource()` — 8 deny patterns:
+  - **v1.5.1:** Explicitly blocks any paths containing hidden directories or files (segments starting with `.`) to protect the nested `.git` repository from tampering
+- Security scan in `validateSource()` — 9 deny patterns:
   - `eval()`, `innerHTML`, `outerHTML`, `document.write`
   - `localStorage`, `sessionStorage`
   - `require('child_process')`, `process.env`
@@ -422,10 +423,13 @@ Redis key: `gamma:metrics:event_lag` — List, keep last 100 samples, no TTL.
 **Acceptance criteria:**
 - `jailPath("../../src/main.tsx")` → throws `ForbiddenException`
 - `jailPath("assets/weather/icon.png")` → returns valid absolute path within jail
+- `jailPath(".git/config")` → throws `ForbiddenException` (v1.5.1: Git tamper protection)
+- `jailPath(".git/hooks/pre-commit")` → throws `ForbiddenException`
+- `jailPath(".env")` → throws `ForbiddenException`
 - `validateSource("const x = eval('1+1')")` → `{ ok: false, errors: ["Security violation: eval()..."] }`
 - Valid source → `{ ok: true, errors: [] }`
 
-**Key spec reference:** §9.3 (Security Linting), §9.5 (Path Jail Guard)
+**Key spec reference:** §9.3 (Security Linting), §9.5 (Path Jail Guard v1.5.1)
 
 ---
 
