@@ -1,6 +1,19 @@
 import { ForbiddenException } from '@nestjs/common';
 import { ScaffoldService } from './scaffold.service';
 
+// ── fs/promises mock ─────────────────────────────────────────────────────
+
+jest.mock('fs/promises', () => ({
+  mkdir: jest.fn().mockResolvedValue(undefined),
+  writeFile: jest.fn().mockResolvedValue(undefined),
+  unlink: jest.fn().mockResolvedValue(undefined),
+  rm: jest.fn().mockResolvedValue(undefined),
+  access: jest.fn().mockRejectedValue(new Error('ENOENT')),
+}));
+
+import * as fsMock from 'fs/promises';
+const mockedFs = fsMock as jest.Mocked<typeof fsMock>;
+
 // ── Mocks ────────────────────────────────────────────────────────────────
 
 const mockConfig = {
@@ -19,6 +32,7 @@ const mockConfig = {
 
 const mockRedis = {
   hset: jest.fn().mockResolvedValue(1),
+  hget: jest.fn().mockResolvedValue(null),
   hdel: jest.fn().mockResolvedValue(1),
   xadd: jest.fn().mockResolvedValue('1-0'),
 };
@@ -35,16 +49,23 @@ describe('ScaffoldService', () => {
 
   describe('jailPath', () => {
     it('should resolve a valid relative path', () => {
-      const result = service.jailPath('WeatherApp.tsx');
+      const result = service.jailPath('weather/WeatherApp.tsx');
       expect(result).toBe(
-        '/tmp/test-gamma-os/web/apps/generated/WeatherApp.tsx',
+        '/tmp/test-gamma-os/web/apps/generated/weather/WeatherApp.tsx',
       );
     });
 
     it('should resolve nested paths', () => {
-      const result = service.jailPath('assets/weather/icon.png');
+      const result = service.jailPath('weather/assets/weather/icon.png');
       expect(result).toBe(
-        '/tmp/test-gamma-os/web/apps/generated/assets/weather/icon.png',
+        '/tmp/test-gamma-os/web/apps/generated/weather/assets/weather/icon.png',
+      );
+    });
+
+    it('should resolve bundle directory', () => {
+      const result = service.jailPath('weather');
+      expect(result).toBe(
+        '/tmp/test-gamma-os/web/apps/generated/weather',
       );
     });
 
@@ -200,6 +221,84 @@ describe('ScaffoldService', () => {
       const result = service.validateSource(code);
       expect(result.ok).toBe(false);
       expect(result.errors.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  // ── Bundle Registry Tests ────────────────────────────────────────────
+
+  describe('scaffold (bundle)', () => {
+    beforeEach(() => {
+      mockedFs.mkdir.mockClear();
+      mockedFs.writeFile.mockClear();
+      mockedFs.access.mockReset().mockRejectedValue(new Error('ENOENT'));
+    });
+
+    it('should register with bundlePath, hasAgent, and updatedAt', async () => {
+      const result = await service.scaffold({
+        appId: 'weather',
+        displayName: 'Weather',
+        sourceCode: `import React from 'react';\nexport const WeatherApp = () => <div/>;`,
+        commit: false,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.modulePath).toBe('./web/apps/generated/weather/WeatherApp');
+
+      const hsetCall = mockRedis.hset.mock.calls[0];
+      expect(hsetCall[0]).toBe('gamma:app:registry');
+      expect(hsetCall[1]).toBe('weather');
+      const entry = JSON.parse(hsetCall[2]);
+      expect(entry.bundlePath).toBe('./web/apps/generated/weather/');
+      expect(entry.hasAgent).toBe(false);
+      expect(entry.updatedAt).toBeGreaterThan(0);
+      expect(entry.modulePath).toBe('./web/apps/generated/weather/WeatherApp');
+    });
+
+    it('should set hasAgent=true when agentPrompt is provided', async () => {
+      // access succeeds — agent-prompt.md exists on disk after write
+      mockedFs.access.mockResolvedValue(undefined);
+
+      await service.scaffold({
+        appId: 'weather',
+        displayName: 'Weather',
+        sourceCode: `import React from 'react';\nexport const WeatherApp = () => <div/>;`,
+        agentPrompt: 'You are a weather assistant.',
+        commit: false,
+      });
+
+      const entry = JSON.parse(mockRedis.hset.mock.calls[0][2]);
+      expect(entry.hasAgent).toBe(true);
+    });
+
+    it('should write contextDoc and agentPrompt files when provided', async () => {
+      mockedFs.access.mockResolvedValue(undefined);
+
+      await service.scaffold({
+        appId: 'weather',
+        displayName: 'Weather',
+        sourceCode: `import React from 'react';\nexport const WeatherApp = () => <div/>;`,
+        contextDoc: '# Weather Context',
+        agentPrompt: 'You are a weather agent.',
+        commit: false,
+      });
+
+      const paths = mockedFs.writeFile.mock.calls.map(c => c[0] as string);
+      expect(paths.some(p => p.endsWith('WeatherApp.tsx'))).toBe(true);
+      expect(paths.some(p => p.endsWith('context.md'))).toBe(true);
+      expect(paths.some(p => p.endsWith('agent-prompt.md'))).toBe(true);
+    });
+
+    it('should NOT write contextDoc/agentPrompt when undefined (PATCH semantics)', async () => {
+      await service.scaffold({
+        appId: 'weather',
+        displayName: 'Weather',
+        sourceCode: `import React from 'react';\nexport const WeatherApp = () => <div/>;`,
+        commit: false,
+      });
+
+      const paths = mockedFs.writeFile.mock.calls.map(c => c[0] as string);
+      expect(paths.some(p => p.endsWith('context.md'))).toBe(false);
+      expect(paths.some(p => p.endsWith('agent-prompt.md'))).toBe(false);
     });
   });
 });

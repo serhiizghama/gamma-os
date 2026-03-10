@@ -148,6 +148,23 @@ export interface ScaffoldRequest {
   commit?: boolean;
   strictCheck?: boolean;
   files?: ScaffoldAsset[];
+  /** App context document — written to bundle as context.md */
+  contextDoc?: string;
+  /** App Owner agent persona — written to bundle as agent-prompt.md */
+  agentPrompt?: string;
+}
+
+export interface AppRegistryEntry {
+  appId: string;
+  displayName: string;
+  modulePath: string;
+  createdAt: number;
+  /** Path to the bundle directory, e.g. "./web/apps/generated/weather/" */
+  bundlePath: string;
+  /** true if an agent-prompt.md exists in the bundle */
+  hasAgent: boolean;
+  /** Timestamp of last scaffold — used as React key for hot-reload */
+  updatedAt: number;
 }
 
 export interface ScaffoldResult {

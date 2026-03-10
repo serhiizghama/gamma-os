@@ -92,6 +92,8 @@ export interface ScaffoldRequest {
   commit?: boolean;
   strictCheck?: boolean;
   files?: ScaffoldAsset[];
+  contextDoc?: string;
+  agentPrompt?: string;
 }
 
 export interface ScaffoldResult {
@@ -272,8 +274,8 @@ export class ScaffoldService {
 
   async scaffold(req: ScaffoldRequest): Promise<ScaffoldResult> {
     const safeId = req.appId.replace(/[^a-z0-9-]/gi, '');
-    const fileName = `${pascal(safeId)}App.tsx`;
-    const filePath = this.jailPath(fileName);
+    const pascalName = pascal(safeId);
+    const fileName = `${pascalName}App.tsx`;
 
     // Security scan + structural validation
     const validation = this.validateSource(req.sourceCode, fileName);
@@ -284,15 +286,30 @@ export class ScaffoldService {
       };
     }
 
-    // Write source file
-    await fs.mkdir(this.JAIL_ROOT, { recursive: true });
+    // Bundle directory: web/apps/generated/{safeId}/
+    const bundleDir = this.jailPath(safeId);
+    await fs.mkdir(bundleDir, { recursive: true });
+
+    // Write source file into bundle
+    const filePath = this.jailPath(`${safeId}/${fileName}`);
     await fs.writeFile(filePath, req.sourceCode, 'utf8');
 
-    // Write assets (v1.3)
+    // PATCH/Merge semantics: only write contextDoc/agentPrompt if provided
+    if (req.contextDoc !== undefined) {
+      const contextPath = this.jailPath(`${safeId}/context.md`);
+      await fs.writeFile(contextPath, req.contextDoc, 'utf8');
+    }
+
+    if (req.agentPrompt !== undefined) {
+      const agentPath = this.jailPath(`${safeId}/agent-prompt.md`);
+      await fs.writeFile(agentPath, req.agentPrompt, 'utf8');
+    }
+
+    // Write assets into bundle (v1.3)
     if (req.files?.length) {
       for (const asset of req.files) {
         const assetPath = this.jailPath(
-          `assets/${safeId}/${path.basename(asset.path)}`,
+          `${safeId}/assets/${safeId}/${path.basename(asset.path)}`,
         );
         await fs.mkdir(path.dirname(assetPath), { recursive: true });
         const buffer =
@@ -325,8 +342,33 @@ export class ScaffoldService {
       }
     }
 
-    // Register in app registry
-    const modulePath = `./web/apps/generated/${fileName.replace('.tsx', '')}`;
+    // Determine hasAgent: true if agent-prompt.md exists on disk (written now or previously)
+    const agentPromptPath = this.jailPath(`${safeId}/agent-prompt.md`);
+    let hasAgent = false;
+    try {
+      await fs.access(agentPromptPath);
+      hasAgent = true;
+    } catch {
+      /* file doesn't exist */
+    }
+
+    // Register in app registry with bundle fields
+    const modulePath = `./web/apps/generated/${safeId}/${pascalName}App`;
+    const bundlePath = `./web/apps/generated/${safeId}/`;
+    const now = Date.now();
+
+    // Preserve createdAt from existing entry if present
+    let createdAt = now;
+    try {
+      const existing = await this.redis.hget('gamma:app:registry', safeId);
+      if (existing) {
+        const parsed = JSON.parse(existing);
+        if (parsed.createdAt) createdAt = parsed.createdAt;
+      }
+    } catch {
+      /* use now */
+    }
+
     await this.redis.hset(
       'gamma:app:registry',
       safeId,
@@ -334,7 +376,10 @@ export class ScaffoldService {
         appId: safeId,
         displayName: req.displayName,
         modulePath,
-        createdAt: Date.now(),
+        createdAt,
+        bundlePath,
+        hasAgent,
+        updatedAt: now,
       }),
     );
 
@@ -353,23 +398,13 @@ export class ScaffoldService {
 
   async remove(appId: string): Promise<{ ok: boolean }> {
     const safeId = appId.replace(/[^a-z0-9-]/gi, '');
-    const fileName = `${pascal(safeId)}App.tsx`;
 
-    const filePath = this.jailPath(fileName);
-    const assetsDir = this.jailPath(`assets/${safeId}`);
-
-    // Remove source file
+    // Remove entire bundle directory
+    const bundleDir = this.jailPath(safeId);
     try {
-      await fs.unlink(filePath);
+      await fs.rm(bundleDir, { recursive: true, force: true });
     } catch {
       /* already gone */
-    }
-
-    // Remove asset directory
-    try {
-      await fs.rm(assetsDir, { recursive: true, force: true });
-    } catch {
-      /* ok */
     }
 
     // Git: stage removal and commit in the NESTED repo (v1.5)
