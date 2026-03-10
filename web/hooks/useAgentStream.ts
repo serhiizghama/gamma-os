@@ -145,13 +145,20 @@ export function useAgentStream(windowId: string): AgentStreamState {
 
         case "user_message": {
           const text = (event.text as string) || "";
+          const rawTs = event.ts;
+          const ts =
+            typeof rawTs === "number"
+              ? rawTs
+              : typeof rawTs === "string"
+                ? parseInt(rawTs, 10) || Date.now()
+                : Date.now();
           setMessages((prev) => [
             ...prev,
             {
-              id: `u-${Date.now()}`,
+              id: `u-${ts}`,
               role: "user",
               text,
-              ts: (event.ts as number) || Date.now(),
+              ts,
             },
           ]);
           break;
@@ -174,26 +181,16 @@ export function useAgentStream(windowId: string): AgentStreamState {
     };
   }, [windowId]);
 
-  // Send message
+  // Send message — no optimistic add, backend echoes user_message via SSE
   const sendMessage = useCallback(
     async (text: string) => {
-      // Optimistically add user message
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `u-${Date.now()}`,
-          role: "user",
-          text,
-          ts: Date.now(),
-        },
-      ]);
-
       try {
-        await fetch(`${API_BASE}/api/sessions/${windowId}/send`, {
+        const res = await fetch(`${API_BASE}/api/sessions/${windowId}/send`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ message: text }),
         });
+        if (!res.ok) throw new Error(`${res.status}`);
       } catch {
         setMessages((prev) => [
           ...prev,
