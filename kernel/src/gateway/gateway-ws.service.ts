@@ -465,7 +465,8 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
     // ── ASSISTANT TEXT ──────────────────────────────────────────────────
     if (stream === 'assistant') {
       const thinkingContent = data?.thinking;
-      const text = data?.text ?? data?.delta ?? '';
+      const rawText: string = data?.text ?? data?.delta ?? '';
+      const isDelta = !!data?.delta;
 
       // Intercept embedded thinking (e.g. <think> tags)
       if (thinkingContent) {
@@ -499,20 +500,35 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
         });
       }
 
-      if (text) {
-        const textEventId = await this.pushSSE(sseKey, {
-          type: 'assistant_delta',
-          windowId,
-          runId,
-          text,
-        });
+      if (rawText) {
+        // OpenClaw sends CUMULATIVE text in data.text — compute delta
+        let deltaText: string;
+        if (isDelta) {
+          // Already a delta — use as-is
+          deltaText = rawText;
+        } else {
+          // Cumulative: diff against previously stored streamText
+          const prev = (await this.redis.hget(`gamma:state:${windowId}`, 'streamText')) ?? '';
+          deltaText = rawText.startsWith(prev)
+            ? rawText.slice(prev.length)
+            : rawText; // fallback: full text if mismatch
+        }
 
-        await this.redis.hset(
-          `gamma:state:${windowId}`,
-          'streamText', text,
-          'lastEventAt', String(nowMs),
-          'lastEventId', textEventId,
-        );
+        if (deltaText) {
+          const textEventId = await this.pushSSE(sseKey, {
+            type: 'assistant_delta',
+            windowId,
+            runId,
+            text: deltaText,
+          });
+
+          await this.redis.hset(
+            `gamma:state:${windowId}`,
+            'streamText', rawText,
+            'lastEventAt', String(nowMs),
+            'lastEventId', textEventId,
+          );
+        }
       }
       return;
     }
