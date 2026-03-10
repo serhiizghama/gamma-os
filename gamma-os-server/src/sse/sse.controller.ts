@@ -92,12 +92,23 @@ export class SseController {
         }
       };
 
+      // ── Keep-alive heartbeat (spec §7.1) ──────────────────────────────
+      // Sends { type: "keep_alive" } every 15s to prevent browser/proxy timeouts.
+      const keepAliveInterval = setInterval(() => {
+        if (!closed) {
+          subscriber.next({
+            data: JSON.stringify({ type: 'keep_alive' }),
+          } as MessageEvent);
+        }
+      }, 15_000);
+
       // Start polling loop (fire-and-forget — runs until closed)
       poll().catch(() => {});
 
       // Cleanup on client disconnect
       return () => {
         closed = true;
+        clearInterval(keepAliveInterval);
         batcher.destroy();
         blockingRedis.disconnect();
       };
