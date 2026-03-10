@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import WebSocket from 'ws';
-import * as ed from '@noble/ed25519';
+// crypto reserved for future device auth signing
 import { ulid } from 'ulid';
 import { REDIS_KEYS } from '@gamma/types';
 import Redis from 'ioredis';
@@ -28,6 +28,7 @@ interface GWFrame {
   event?: string;
   method?: string;
   payload?: Record<string, unknown>;
+  error?: Record<string, unknown> | string;
   seq?: number;
 }
 
@@ -93,9 +94,10 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
 
   private readonly gatewayUrl: string;
   private readonly gatewayToken: string;
-  private readonly deviceId: string;
-  private readonly publicKey: string;
-  private readonly privateKey: string;
+  // Device identity — reserved for future paired device auth
+  // private readonly deviceId: string;
+  // private readonly publicKey: string;
+  // private readonly privateKey: string;
 
   constructor(
     private readonly config: ConfigService,
@@ -104,9 +106,10 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
   ) {
     this.gatewayUrl = this.config.get('OPENCLAW_GATEWAY_URL', 'ws://localhost:18789');
     this.gatewayToken = this.config.get('OPENCLAW_GATEWAY_TOKEN', '');
-    this.deviceId = this.config.get('GAMMA_DEVICE_ID', 'gamma-os-bridge-001');
-    this.publicKey = this.config.get('GAMMA_DEVICE_PUBLIC_KEY', '');
-    this.privateKey = this.config.get('GAMMA_DEVICE_PRIVATE_KEY', '');
+    // Device identity reserved for future paired device auth
+    // this.deviceId = this.config.get('GAMMA_DEVICE_ID', 'gamma-os-bridge-001');
+    // this.publicKey = this.config.get('GAMMA_DEVICE_PUBLIC_KEY', '');
+    // this.privateKey = this.config.get('GAMMA_DEVICE_PRIVATE_KEY', '');
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────────────
@@ -682,51 +685,51 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
 
   private async handleChallenge(frame: GWFrame): Promise<void> {
     const nonce = frame.payload?.['nonce'] as string | undefined;
-    if (!nonce) throw new Error('Challenge frame missing nonce');
+    this.logger.log(`Received challenge (nonce=${nonce ? 'present' : 'absent'}), authenticating...`);
 
-    this.logger.log('Received challenge, signing nonce...');
-
-    const signature = this.signChallenge(nonce);
     const frameId = ulid();
+
+    // OpenClaw Gateway ConnectParams schema:
+    //   client.id: one of the GATEWAY_CLIENT_IDS constants
+    //   client.mode: one of GATEWAY_CLIENT_MODES (webchat|cli|ui|backend|node)
+    //   auth.token: the gateway token
+    const params: Record<string, unknown> = {
+      minProtocol: 3,
+      maxProtocol: 3,
+      client: {
+        id: 'gateway-client',
+        version: '1.0.0',
+        platform: 'macos',
+        mode: 'backend',
+      },
+      auth: {
+        token: this.gatewayToken,
+      },
+    };
+
+    // Device signing is optional — skip unless properly paired with the Gateway
+    // (device ID must be derived from public key via deriveDeviceIdFromPublicKey)
 
     this.send({
       type: 'req',
       id: frameId,
       method: 'connect',
-      params: {
-        minProtocol: 3,
-        maxProtocol: 3,
-        client: { id: 'gamma-os-bridge', version: '1.0.0', platform: 'macos', mode: 'operator' },
-        role: 'operator',
-        scopes: ['operator.read', 'operator.write'],
-        auth: { token: this.gatewayToken },
-        device: {
-          id: this.deviceId,
-          publicKey: this.publicKey,
-          signature,
-          signedAt: Date.now(),
-          nonce,
-        },
-      },
+      params,
     });
 
     const response = await this.waitForResponse(frameId, 5000);
     if (response.ok) {
+      this.logger.log('Gateway authenticated successfully');
       this.onAuthenticated();
     } else {
-      throw new Error(`Authentication rejected: ${JSON.stringify(response.payload)}`);
+      const errMsg = response.error
+        ? JSON.stringify(response.error)
+        : JSON.stringify(response.payload);
+      throw new Error(`Authentication rejected: ${errMsg}`);
     }
   }
 
-  private signChallenge(nonce: string): string {
-    if (!this.privateKey) {
-      throw new Error('GAMMA_DEVICE_PRIVATE_KEY not configured');
-    }
-    const privateKeyBytes = Buffer.from(this.privateKey, 'base64');
-    const messageBytes = new TextEncoder().encode(nonce);
-    const signatureBytes = ed.sign(messageBytes, privateKeyBytes);
-    return Buffer.from(signatureBytes).toString('base64');
-  }
+  // signChallenge reserved for future device pairing auth
 
   // ── Send / Request helpers ─────────────────────────────────────────────
 
