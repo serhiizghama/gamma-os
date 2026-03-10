@@ -1,8 +1,9 @@
 # Gamma OS — Phase 3: Frontend & Multi-Agent Architecture
-**Version:** 1.1  
+**Version:** 1.2  
 **Status:** Draft — Ready for Review  
 **Audience:** Senior Frontend Developer (React), Agent Architect  
 **Depends on:** Phase 2 Backend Integration Specification v1.6  
+**Changelog v1.2:** Fixed unscaffold memory leaks (app data + App Owner session cleanup on delete). Defined Vite alias for `@gamma/os` module resolution. Resolved Hot-Reload strategy: Full Remount with dynamic key (not Fast Refresh).  
 **Changelog v1.1:** English-only token constraints for AI context files (`context.md`, `agent-prompt.md`). OS-level App Storage API (`useAppStorage` hook + Redis persistence) replacing blocked `localStorage`.  
 
 ---
@@ -165,7 +166,7 @@ interface AppRegistryEntry {
   bundlePath: string;           // "./web/apps/generated/weather/"
   hasAgent: boolean;            // true if agent-prompt.md exists
   createdAt: number;
-  updatedAt: number;
+  updatedAt: number;             // v1.2: used as React key for Full Remount
 }
 ```
 
@@ -537,7 +538,39 @@ web/apps/generated/
 │           └── icon.png
 ```
 
-### 5.5 System Architect Prompt Engineering
+### 5.5 Unscaffold Cleanup (v1.2 — Phase 2 Override)
+
+When the System Architect deletes an app via `DELETE /api/scaffold/:appId`, the backend must clean up **all** associated resources — not just the files and Git history from Phase 2.
+
+**Updated `ScaffoldService.remove(appId)` must additionally:**
+
+```typescript
+// 1. Delete all app data from Redis (user-persisted state via useAppStorage)
+const dataKeys = await this.redis.keys(`gamma:app-data:${safeId}:*`);
+if (dataKeys.length > 0) {
+  await this.redis.del(...dataKeys);
+}
+
+// 2. Kill the App Owner session immediately (don't wait for 24h GC)
+const appOwnerWindowId = `app-owner-${safeId}`;
+try {
+  await this.sessionsService.remove(appOwnerWindowId);
+} catch { /* session may not exist if user never clicked ✨ */ }
+```
+
+**Full unscaffold cleanup order:**
+1. Delete `.tsx` + `context.md` + `agent-prompt.md` + `assets/` directory
+2. Git commit removal in nested repo
+3. Delete all `gamma:app-data:<appId>:*` Redis keys (user data)
+4. Kill App Owner Gateway session (`app-owner-<appId>`) immediately
+5. Remove from `gamma:app:registry`
+6. Broadcast `component_removed` via SSE
+
+This prevents two classes of resource leaks:
+- **Data orphans:** App data keys lingering in Redis after the app is deleted
+- **Session orphans:** App Owner LLM sessions consuming Gateway memory until the 24h GC fires
+
+### 5.6 System Architect Prompt Engineering
 
 The System Architect's tool call to `scaffold` must be structured to produce all three artifacts. The scaffold tool description provided to the agent:
 
@@ -620,7 +653,56 @@ App Owner agent receives enriched message
   → Agent responds in chat: "Done. Added humidity percentage to each city card."
 ```
 
-### 6.3 Context.md Versioning
+### 6.3 Hot-Reload Strategy: Full Remount (v1.2)
+
+**Decision:** Full Remount via dynamic `key` prop. **Not** React Fast Refresh.
+
+**Why Fast Refresh won't work:**
+- Fast Refresh requires hook call order and count to remain stable between edits
+- AI-generated code frequently changes the number, order, and types of hooks (adding `useState`, `useEffect`, `useAppStorage`, etc.)
+- When hook order changes, Fast Refresh falls back to a full remount anyway — but with confusing error warnings
+- Generated components may change their export structure (`default` ↔ `named`), which also breaks Fast Refresh
+
+**Solution: Key-based Remount**
+
+The dynamic component renderer uses the app registry's `updatedAt` timestamp as a React `key`. When `component_ready` fires, the registry entry is updated, the key changes, and React cleanly unmounts the old component and mounts the new one.
+
+```typescript
+// In the dynamic app renderer
+function DynamicAppRenderer({ appId }: { appId: string }) {
+  const registry = useAppRegistry();
+  const entry = registry[appId];
+  const [Component, setComponent] = useState<React.ComponentType | null>(null);
+
+  useEffect(() => {
+    if (!entry) return;
+    // Dynamic import with cache-bust via timestamp
+    import(/* @vite-ignore */ `${entry.modulePath}.tsx?t=${entry.updatedAt}`)
+      .then((mod) => setComponent(() => mod.default ?? mod[Object.keys(mod)[0]]))
+      .catch(console.error);
+  }, [entry?.modulePath, entry?.updatedAt]);
+
+  if (!Component || !entry) return null;
+
+  // key={updatedAt} forces React to unmount old + mount new on every update
+  return <Component key={entry.updatedAt} />;
+}
+```
+
+**Behavior on `component_ready` SSE event:**
+1. Frontend receives `{ type: "component_ready", appId, modulePath }`
+2. Updates `AppRegistryEntry.updatedAt` in Zustand store
+3. `DynamicAppRenderer` re-runs effect → `import()` fetches updated module
+4. `key` changes → React unmounts old component (cleans up hooks, effects, subscriptions)
+5. New component mounts fresh with clean state
+6. `useAppStorage` hooks re-hydrate from Redis on mount → user data preserved
+
+**Trade-off:** Component state is lost on every AI update (e.g., scroll position, form input). This is acceptable because:
+- Persistent user data lives in `useAppStorage` (survives remount)
+- Ephemeral UI state (scroll, focus) is expected to reset after a code change
+- This is far more reliable than attempting to preserve state across potentially incompatible component versions
+
+### 6.4 Context.md Versioning
 
 Every time `context.md` is updated, the change is captured in the nested Git history:
 
@@ -850,7 +932,36 @@ export function useAppStorage<T>(
 | Max keys per app: 50 | Backend checks `KEYS gamma:app-data:<appId>:*` count before write |
 | No cross-app reads | Endpoint only accepts the app's own `appId` |
 
-### 8.6 Update to Security Deny Patterns
+### 8.6 Module Resolution: `@gamma/os` Alias (v1.2)
+
+Generated apps import the storage hook as `import { useAppStorage } from '@gamma/os'`. This virtual module must be resolved by Vite at build time.
+
+**Vite config (`web/vite.config.ts`):**
+
+```typescript
+import { defineConfig } from 'vite';
+import path from 'path';
+
+export default defineConfig({
+  resolve: {
+    alias: {
+      '@gamma/os': path.resolve(__dirname, 'hooks/os-api.ts'),
+    },
+  },
+});
+```
+
+**The barrel export (`web/hooks/os-api.ts`):**
+
+```typescript
+// @gamma/os — OS-level APIs for generated applications
+export { useAppStorage } from './useAppStorage';
+// Future exports: useAppTheme, useOSNotification, useWindowSize, etc.
+```
+
+This pattern allows us to expand the OS API surface over time without changing generated app imports.
+
+### 8.7 Update to Security Deny Patterns
 
 The `validateSource()` security scanner (Phase 2) already blocks `localStorage` and `sessionStorage`. No changes needed — generated apps must use `useAppStorage` instead.
 
@@ -933,7 +1044,7 @@ gamma-os/
 | 1 | Should the App Owner agent be able to spawn sub-agents (e.g., a "data fetcher" agent)? | Agent complexity, Gateway session count |
 | 2 | Should context.md have a max size limit to prevent context window overflow? | Token economics, summarization strategy |
 | 3 | Should the System Architect be able to observe App Owner conversations for debugging? | Memory bus integration, privacy model |
-| 4 | Hot-reload strategy: full component remount or React Fast Refresh? | UX smoothness, state preservation |
+| ~~4~~ | ~~Hot-reload strategy~~ → **Resolved v1.2:** Full Remount via `key={updatedAt}` (see §6.3) | — |
 | 5 | Should we support multi-file components (e.g., `WeatherApp.tsx` + `WeatherCard.tsx`)? | Bundle complexity, import resolution |
 
 ---
