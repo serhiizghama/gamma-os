@@ -6,6 +6,7 @@ import { GatewayModule } from './gateway/gateway.module';
 import { SessionsModule } from './sessions/sessions.module';
 import { SseModule } from './sse/sse.module';
 import { SystemModule } from './system/system.module';
+import { ScaffoldModule } from './scaffold/scaffold.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { SystemModule } from './system/system.module';
     SessionsModule,
     SseModule,
     SystemModule,
+    ScaffoldModule,
   ],
   controllers: [AppController],
 })
