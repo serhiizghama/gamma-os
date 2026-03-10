@@ -1,5 +1,5 @@
 # Gamma OS — Phase 2 Implementation Plan
-**Based on:** Backend Integration Specification v1.4  
+**Based on:** Backend Integration Specification v1.5  
 **Status:** Ready to execute  
 **Execution model:** Loop-by-loop, task-by-task. Verify each task before proceeding to the next.
 
@@ -410,7 +410,7 @@ Redis key: `gamma:metrics:event_lag` — List, keep last 100 samples, no TTL.
 
 **What to build:**
 - `jailPath(relativePath: string): string` utility method in `ScaffoldService`
-  - Resolves path, verifies it stays within `web/web/apps/generated/`
+  - Resolves path, verifies it stays within `web/apps/generated/`
   - Throws `ForbiddenException` on traversal attempts
 - Security scan in `validateSource()` — 8 deny patterns:
   - `eval()`, `innerHTML`, `outerHTML`, `document.write`
@@ -429,28 +429,42 @@ Redis key: `gamma:metrics:event_lag` — List, keep last 100 samples, no TTL.
 
 ---
 
-### Task 5.2 — Scaffold Service & Git Integration
+### Task 5.2 — Scaffold Service, Nested Git & Smart Commit
 
 **What to build:**
-- `POST /api/scaffold` — full scaffold pipeline:
-  1. Security scan → syntax validation → write to disk → git commit → SSE broadcast
-- `DELETE /api/scaffold/:appId` — unscaffold pipeline:
-  1. Delete `.tsx` + assets → git commit → remove from registry → broadcast `component_removed`
-- `simple-git` integration with author `serhiizghama <zmrser@gmail.com>`
+- **Nested Git Initialization (v1.5):**
+  - On first scaffold, check if `web/apps/generated/` has its own `.git`
+  - If not, `git init` → configure author → `checkoutLocalBranch(SCAFFOLD_GIT_BRANCH)` → initial commit
+  - If repo exists, ensure correct branch is checked out
+  - Main repo `.gitignore` already excludes `web/apps/generated/`
+- **`POST /api/scaffold`** — full scaffold pipeline:
+  1. Security scan → syntax validation → write to disk → nested git commit → SSE broadcast
+  2. If `SCAFFOLD_AUTO_PUSH=true` → attempt `git push` to private remote (best-effort)
+- **`DELETE /api/scaffold/:appId`** — unscaffold pipeline:
+  1. Delete `.tsx` + assets → nested git commit → remove from registry → broadcast `component_removed`
+- `simple-git` scoped to `web/apps/generated/` (NOT the monorepo root)
 - Register/unregister app in `gamma:app:registry` Redis Hash
 
+**New env variables:**
+- `SCAFFOLD_GIT_BRANCH` — branch name for commits (default: `private-apps`)
+- `SCAFFOLD_AUTO_PUSH` — auto-push after commit (default: `false`)
+- `SCAFFOLD_PRIVATE_REPO_URL` — remote URL for the private apps repo (optional)
+
 **Acceptance criteria:**
-- `POST /api/scaffold { appId: "weather", sourceCode: "...", commit: true }` → file appears in `web/web/apps/generated/`, git log shows commit, SSE delivers `component_ready`
-- `DELETE /api/scaffold/weather` → file gone, git log shows removal commit, SSE delivers `component_removed`
+- First scaffold → `web/apps/generated/.git` exists, on branch `private-apps`
+- `POST /api/scaffold { appId: "weather", sourceCode: "...", commit: true }` → file in `web/apps/generated/`, `git log` in nested repo shows commit, SSE delivers `component_ready`
+- `DELETE /api/scaffold/weather` → file gone, nested git log shows removal, SSE delivers `component_removed`
+- `cd web/apps/generated && git log --oneline` shows only generated app commits
+- Main repo `git status` does NOT show generated app files
 - Submitting code with `eval()` → `400 Bad Request` with validation errors
 
-**Key spec reference:** §9.1 (Flow), §9.2 (ScaffoldService), §9.6 (App Deletion)
+**Key spec reference:** §9.1 (Flow), §9.2 (ScaffoldService v1.5), §9.6 (App Deletion), §12 (Environment)
 
-**Files to create:**
+**Files to create/update:**
 ```
-src/scaffold/
+kernel/src/scaffold/
 ├── scaffold.controller.ts
-├── scaffold.service.ts
+├── scaffold.service.ts          ← update with ensureNestedGit()
 ├── scaffold-watcher.service.ts
 └── scaffold.module.ts
 ```
@@ -461,9 +475,9 @@ src/scaffold/
 
 **What to build:**
 - `GET /api/assets/:appId/*` endpoint using `@fastify/static`
-- Path jail: resolve asset path and verify it stays within `web/web/apps/generated/assets/`
+- Path jail: resolve asset path and verify it stays within `web/apps/generated/assets/`
 - Support: PNG, JPEG, SVG, JSON, WOFF2 (MIME type auto-detection)
-- `ScaffoldRequest.files[]` handling — write base64/utf8 assets to `web/web/apps/generated/assets/:appId/`
+- `ScaffoldRequest.files[]` handling — write base64/utf8 assets to `web/apps/generated/assets/:appId/`
 
 **Acceptance criteria:**
 - Scaffold an app with a PNG asset → `GET /api/assets/weather/icons/sun.png` returns the image
@@ -514,7 +528,7 @@ Before marking Phase 2 complete, verify:
 - [ ] Loop 2: Sessions CRUD works, event bridge routes all 5 stream types correctly
 - [ ] Loop 3: SSE streams live, batching reduces re-renders, keep-alive fires every 15s
 - [ ] Loop 4: F5 restores live state, abort works, health endpoint returns valid metrics
-- [ ] Loop 5: Scaffold creates/deletes apps, security scan blocks dangerous code, assets served correctly
+- [ ] Loop 5: Scaffold creates/deletes apps in nested Git repo, security scan blocks dangerous code, assets served correctly
 - [ ] Integration: Open Gamma OS, send a message in a window, see thinking + tool + text stream live
 - [ ] Edge cases: Gateway disconnect → reconnect, tool timeout, F5 mid-stream, abort in flight
 
@@ -524,7 +538,7 @@ Before marking Phase 2 complete, verify:
 
 | Document | Location |
 |---|---|
-| Backend Spec v1.4 | `docs/PHASE2_BACKEND_SPEC.md` |
+| Backend Spec v1.5 | `docs/PHASE2_BACKEND_SPEC.md` |
 | Frontend Architecture | `docs/SPEC.md` |
 | This Plan | `docs/IMPLEMENTATION_PLAN.md` |
 | Project README | `README.md` |

@@ -1,7 +1,8 @@
 # Gamma OS — Phase 2: Backend Integration Specification
-**Version:** 1.4  
+**Version:** 1.5  
 **Status:** Ready for Implementation  
 **Audience:** Senior Backend Developer (NestJS + Redis)  
+**Changelog v1.5:** Smart Commit Architecture — nested Git workspace for generated apps (decoupled from main repo), branch-specific commits (`SCAFFOLD_GIT_BRANCH`), optional auto-push to private remote, updated ScaffoldService with isolated Git context.  
 **Changelog v1.4:** Management & Health — app deletion (unscaffold), system health endpoint (CPU/RAM/Redis/Gateway), tokenUsage in lifecycle_end, path jail guard for scaffold writes.  
 **Changelog v1.3:** Resilience & Control — agent interruption (abort endpoint), stream throttling/batching, scaffold asset support + static serving, security linting in validateSource, tool result timeout (30s watchdog).  
 **Changelog v1.2:** Production-grade resilience additions — session recovery (F5 sync), scaffold code validation, memory bus hierarchy (decision tree), SSE keep-alive + gateway_status, CORS policy.  
@@ -1123,96 +1124,162 @@ streamText      → live-printing assistant response (shown while running)
 1. User asks: "Build me a Weather app"
 2. Architect Agent generates WeatherApp.tsx source + optional assets
 3. Agent calls POST /api/scaffold { appId:"weather", sourceCode:"...", files:[...] }
-4. NestJS runs security scan → syntax validation → writes files to disk  ← v1.3
-5. NestJS: git add && git commit -m "feat: generated WeatherApp"
-6. NestJS pushes SSE: { type:"component_ready", appId:"weather", modulePath:"..." }
-7. React: const mod = await import(modulePath) → register in app registry
-8. User opens Weather from Launchpad — no page reload
-9. Assets served via GET /api/assets/:appId/*                             ← v1.3
+4. Kernel runs security scan → syntax validation → writes files to disk   ← v1.3
+5. Kernel ensures nested Git repo exists in web/apps/generated/           ← v1.5
+6. Kernel: git add . && git commit in the NESTED repo (private-apps branch)
+7. Kernel pushes SSE: { type:"component_ready", appId:"weather", modulePath:"..." }
+8. React: const mod = await import(modulePath) → register in app registry
+9. User opens Weather from Launchpad — no page reload
+10. Assets served via GET /api/assets/:appId/*                            ← v1.3
+11. (Optional) If SCAFFOLD_AUTO_PUSH=true → git push to private remote   ← v1.5
 ```
 
-### 9.2 Scaffold Service (v1.2 — with Code Validation)
+**Git Isolation (v1.5):**  
+The `web/apps/generated/` directory is `.gitignore`d in the main Gamma OS repository. Generated apps live in a **separate, nested Git repository** inside that directory. This decouples the open-source core from user-generated/private applications:
+
+```
+gamma-os/                  ← main repo (public / open source)
+├── .gitignore             ← includes "web/apps/generated/"
+├── kernel/
+├── web/
+│   └── apps/
+│       └── generated/     ← nested Git repo (private apps)
+│           ├── .git/      ← independent history
+│           ├── WeatherApp.tsx
+│           └── assets/
+│               └── weather/
+└── packages/
+```
+
+### 9.2 Scaffold Service (v1.5 — Smart Commit with Nested Git)
 
 ```typescript
 @Injectable()
 export class ScaffoldService {
   private readonly appsDir = path.resolve(GAMMA_OS_REPO, "web/apps/generated");
-  private readonly git = simpleGit(GAMMA_OS_REPO);
+  private readonly branch: string;        // SCAFFOLD_GIT_BRANCH || "private-apps"
+  private readonly autoPush: boolean;     // SCAFFOLD_AUTO_PUSH || false
+  private readonly privateRepoUrl: string | null; // SCAFFOLD_PRIVATE_REPO_URL || null
+  private gitReady = false;
+
+  // ── Nested Git — independent repo inside web/apps/generated/ ─────────
+
+  /**
+   * Ensures the nested Git repo exists and is on the correct branch.
+   * Called lazily on first scaffold operation.
+   *
+   * v1.5: Generated apps are decoupled from the main repo.
+   * The main .gitignore excludes web/apps/generated/.
+   */
+  private async ensureNestedGit(): Promise<SimpleGit> {
+    const git = simpleGit(this.appsDir);
+
+    if (!this.gitReady) {
+      await fs.mkdir(this.appsDir, { recursive: true });
+
+      // Check if .git exists
+      const isRepo = await git.checkIsRepo().catch(() => false);
+
+      if (!isRepo) {
+        // First-time initialization
+        await git.init();
+        await git.addConfig("user.name", GIT_AUTHOR_NAME);
+        await git.addConfig("user.email", GIT_AUTHOR_EMAIL);
+
+        // Create initial commit on the target branch
+        await git.checkoutLocalBranch(this.branch);
+        await fs.writeFile(
+          path.join(this.appsDir, ".gitkeep"),
+          "# AI-generated apps directory\n",
+        );
+        await git.add(".");
+        await git.commit("init: generated apps workspace");
+
+        // Configure remote if private repo URL is set
+        if (this.privateRepoUrl) {
+          await git.addRemote("origin", this.privateRepoUrl);
+        }
+      } else {
+        // Repo exists — ensure we're on the correct branch
+        const currentBranch = await git.revparse(["--abbrev-ref", "HEAD"]);
+        if (currentBranch.trim() !== this.branch) {
+          // Try checkout; create if branch doesn't exist
+          try {
+            await git.checkout(this.branch);
+          } catch {
+            await git.checkoutLocalBranch(this.branch);
+          }
+        }
+      }
+
+      this.gitReady = true;
+    }
+
+    return git;
+  }
+
+  // ── Main scaffold flow ───────────────────────────────────────────────
 
   async scaffold(req: ScaffoldRequest): Promise<ScaffoldResult> {
     const safeId   = req.appId.replace(/[^a-z0-9-]/gi, "");
     const fileName = `${pascal(safeId)}App.tsx`;
-    const filePath = path.join(this.appsDir, fileName);
+    const filePath = this.jailPath(fileName);
 
-    // ── v1.2: Validate generated source before writing to disk ───────────
-    const validation = await this.validateSource(req.sourceCode, fileName);
+    // Security scan + syntax validation (v1.3)
+    const validation = this.validateSource(req.sourceCode, fileName);
     if (!validation.ok) {
-      return { ok: false, error: `Syntax validation failed:\n${validation.errors.join("\n")}` };
+      return { ok: false, error: `Validation failed:\n${validation.errors.join("\n")}` };
     }
 
     await fs.mkdir(this.appsDir, { recursive: true });
     await fs.writeFile(filePath, req.sourceCode, "utf8");
 
+    // Write assets (v1.3)
+    if (req.files?.length) {
+      for (const asset of req.files) {
+        const assetPath = this.jailPath(`assets/${safeId}/${path.basename(asset.path)}`);
+        await fs.mkdir(path.dirname(assetPath), { recursive: true });
+        const buffer = asset.encoding === "base64"
+          ? Buffer.from(asset.content, "base64")
+          : Buffer.from(asset.content, "utf8");
+        await fs.writeFile(assetPath, buffer);
+      }
+    }
+
+    // Git commit in the NESTED repo (v1.5)
     let commitHash: string | undefined;
     if (req.commit) {
-      await this.git.add(filePath);
-      const result = await this.git.commit(
+      const git = await this.ensureNestedGit();
+      await git.add(".");
+      const result = await git.commit(
         `feat: generated ${req.displayName} app`,
         { "--author": `${GIT_AUTHOR_NAME} <${GIT_AUTHOR_EMAIL}>` }
       );
       commitHash = result.commit;
+
+      // Optional auto-push to private remote (v1.5)
+      if (this.autoPush && this.privateRepoUrl) {
+        try {
+          await git.push("origin", this.branch);
+        } catch { /* best-effort — log but don't fail the scaffold */ }
+      }
     }
 
+    // Register in app registry + broadcast SSE
     const modulePath = `./web/apps/generated/${fileName.replace(".tsx", "")}`;
+    await this.redis.hset("gamma:app:registry", safeId, JSON.stringify({
+      appId: safeId, displayName: req.displayName, modulePath, createdAt: Date.now(),
+    }));
     await this.redis.xadd("gamma:sse:broadcast", "*",
       ...flattenEntry({ type: "component_ready", appId: safeId, modulePath })
     );
 
     return { ok: true, filePath, commitHash, modulePath };
   }
-
-  /**
-   * Validates TypeScript/TSX source without writing to disk.
-   *
-   * Strategy:
-   * 1. Fast path — use @typescript-eslint/typescript-estree to parse AST
-   *    (no spawning a process, ~10ms). Catches syntax errors.
-   * 2. Slow path (optional, only when req.strictCheck=true) — spawn
-   *    `tsc --noEmit` in a temp directory for full type-checking (~2-4s).
-   *
-   * NOTE: @typescript-eslint/typescript-estree is preferred over spawning tsc
-   * for every scaffold request because it is synchronous (~10ms) vs
-   * tsc (~2-4s per invocation). Full type-check is an optional slow path.
-   */
-  private async validateSource(
-    source: string,
-    fileName: string,
-  ): Promise<{ ok: boolean; errors: string[] }> {
-    const errors: string[] = [];
-
-    // ── Fast path: AST parse (syntax only) ────────────────────────────────
-    try {
-      const { parse } = await import("@typescript-eslint/typescript-estree");
-      parse(source, {
-        jsx: true,
-        errorOnUnknownASTType: false,
-        comment: false,
-        tokens: false,
-      });
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      errors.push(`Syntax error in ${fileName}: ${msg}`);
-    }
-
-    // ── Guard: must export a React component ─────────────────────────────
-    if (!source.includes("export") || !source.includes("React")) {
-      errors.push("Generated file must export a React component");
-    }
-
-    return { ok: errors.length === 0, errors };
-  }
 }
 ```
+
+**Key change in v1.5:** `simpleGit()` is now scoped to `web/apps/generated/` (not the monorepo root). All commits happen in an isolated Git history on the `private-apps` branch.
 
 ### 9.3 Security Linting in validateSource (v1.3)
 
@@ -1420,14 +1487,20 @@ async remove(appId: string): Promise<{ ok: boolean }> {
   // Remove asset directory
   try { await fs.rm(assetsDir, { recursive: true, force: true }); } catch { /* ok */ }
 
-  // Git: stage removal and commit
-  await this.git.rm([filePath]).catch(() => {});
-  const hasChanges = (await this.git.status()).files.length > 0;
+  // Git: stage removal and commit in the NESTED repo (v1.5)
+  const git = await this.ensureNestedGit();
+  await git.add(".");
+  const hasChanges = (await git.status()).files.length > 0;
   if (hasChanges) {
-    await this.git.commit(
+    await git.commit(
       `chore: remove generated ${safeId} app`,
       { "--author": `${GIT_AUTHOR_NAME} <${GIT_AUTHOR_EMAIL}>` }
     );
+
+    // Optional auto-push (v1.5)
+    if (this.autoPush && this.privateRepoUrl) {
+      try { await git.push("origin", this.branch); } catch { /* best-effort */ }
+    }
   }
 
   // Remove from app registry
@@ -1609,19 +1682,47 @@ await app.listen(3001, "0.0.0.0");
 ## 12. Environment Variables
 
 ```env
+# ── OpenClaw Gateway ──────────────────────────────────────
 OPENCLAW_GATEWAY_URL=ws://localhost:18789
 OPENCLAW_GATEWAY_TOKEN=your-token-here
 
+# ── Device Identity (Ed25519) ────────────────────────────
 GAMMA_DEVICE_ID=gamma-os-bridge-001
 GAMMA_DEVICE_PUBLIC_KEY=base64...
 GAMMA_DEVICE_PRIVATE_KEY=base64...
 
+# ── Redis ─────────────────────────────────────────────────
 REDIS_URL=redis://localhost:6379
 
-GAMMA_OS_REPO=/Users/sputnik/.openclaw/agents/serhii/projects/gamma-os
+# ── Gamma OS Repo ────────────────────────────────────────
+GAMMA_OS_REPO=/path/to/gamma-os
+
+# ── Git Author ────────────────────────────────────────────
 GIT_AUTHOR_NAME=serhiizghama
 GIT_AUTHOR_EMAIL=zmrser@gmail.com
+
+# ── Scaffold — Smart Commit (v1.5) ───────────────────────
+SCAFFOLD_GIT_BRANCH=private-apps
+SCAFFOLD_AUTO_PUSH=false
+SCAFFOLD_PRIVATE_REPO_URL=
+
+# ── Server ────────────────────────────────────────────────
+PORT=3001
 ```
+
+| Variable | Default | Description |
+|---|---|---|
+| `OPENCLAW_GATEWAY_URL` | `ws://localhost:18789` | Gateway WebSocket URL |
+| `OPENCLAW_GATEWAY_TOKEN` | *(none)* | Gateway auth token (if empty, Gateway connection skipped) |
+| `GAMMA_DEVICE_ID` | `gamma-os-bridge-001` | Ed25519 device identity |
+| `REDIS_URL` | `redis://localhost:6379` | Redis connection string |
+| `GAMMA_OS_REPO` | *(cwd)* | Absolute path to the monorepo root |
+| `GIT_AUTHOR_NAME` | — | Git commit author name |
+| `GIT_AUTHOR_EMAIL` | — | Git commit author email |
+| `SCAFFOLD_GIT_BRANCH` | `private-apps` | Branch for generated app commits in the nested repo (v1.5) |
+| `SCAFFOLD_AUTO_PUSH` | `false` | Auto-push to private remote after scaffold/delete (v1.5) |
+| `SCAFFOLD_PRIVATE_REPO_URL` | *(none)* | Remote URL for the nested generated apps repo (v1.5) |
+| `PORT` | `3001` | HTTP server port |
 
 ---
 
@@ -1694,9 +1795,11 @@ kernel/
 | P2 | **v1.4** System health endpoint (CPU/RAM/Redis/GW) | 0.5 day |
 | P2 | **v1.4** tokenUsage in lifecycle_end event | 0.25 day |
 | P2 | **v1.4** Path jail guard for all scaffold writes | 0.25 day |
+| P1 | **v1.5** Nested Git repo init + branch management | 0.5 day |
+| P2 | **v1.5** Auto-push to private remote | 0.25 day |
 
-**Total Phase 2 estimate: ~15.5 developer-days**  
-*(+1.5 days for v1.4 management & health layer)*
+**Total Phase 2 estimate: ~16.25 developer-days**  
+*(+1.5 days for v1.4 management & health layer, +0.75 days for v1.5 Smart Commit)*
 
 ---
 
@@ -1709,5 +1812,6 @@ kernel/
 | v1.2 | Resilience | F5 sync, code validation, memory hierarchy, keep-alive, CORS |
 | v1.3 | Control | Abort, stream batching, asset scaffold, security linting, tool timeout |
 | v1.4 | Management | App deletion, system health, tokenUsage, path jail |
+| v1.5 | Smart Commit | Nested Git workspace, branch isolation, auto-push to private remote |
 
-**This specification is now feature-complete. Next step: NestJS boilerplate generation.**
+**This specification is feature-complete for Phase 2. Implementation is in progress.**
