@@ -5,6 +5,7 @@ import { RedisModule } from './redis/redis.module';
 import { GatewayModule } from './gateway/gateway.module';
 import { SessionsModule } from './sessions/sessions.module';
 import { SseModule } from './sse/sse.module';
+import { SystemModule } from './system/system.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { SseModule } from './sse/sse.module';
     GatewayModule,
     SessionsModule,
     SseModule,
+    SystemModule,
   ],
   controllers: [AppController],
 })

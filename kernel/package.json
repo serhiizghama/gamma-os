@@ -4,7 +4,7 @@
   "description": "Gamma OS Phase 2 — Backend Integration Server",
   "private": true,
   "scripts": {
-    "build": "nest build",
+    "build": "nest build && find dist -name '*.js' -exec sed -i '' 's/gamma-types\\/index\\.ts/gamma-types\\/index.js/g' {} +",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
