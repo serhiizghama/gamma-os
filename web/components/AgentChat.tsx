@@ -12,6 +12,7 @@ interface AgentChatBaseProps {
   variant: "fullWindow" | "embedded";
   accentColor?: string;
   placeholder?: string;
+  onClose?: () => void;
 }
 
 /** Live mode — driven by external stream hook */
@@ -70,7 +71,7 @@ const MOCK_MESSAGES: ChatMessage[] = [
 // ── Component ────────────────────────────────────────────────────────────
 
 export function AgentChat(props: AgentChatProps): React.ReactElement {
-  const { title, variant, accentColor = "#0066ff", placeholder } = props;
+  const { title, variant, accentColor = "#0066ff", placeholder, onClose } = props;
 
   // Determine if live or mock
   const isLive = "mode" in props && props.mode === "live";
@@ -132,7 +133,7 @@ export function AgentChat(props: AgentChatProps): React.ReactElement {
         overflow: "hidden",
       }}
     >
-      <ChatHeader title={title} status={status} accentColor={accentColor} />
+      <ChatHeader title={title} status={status} accentColor={accentColor} onClose={onClose} />
       <MessageList
         messages={messages}
         pendingToolLines={pendingToolLines}
@@ -151,10 +152,19 @@ export function AgentChat(props: AgentChatProps): React.ReactElement {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.4; }
         }
-        .agent-chat-markdown p { margin: 4px 0; color: var(--color-text-primary); }
+        .agent-chat-bubble .agent-chat-markdown {
+          color: inherit;
+        }
+        .agent-chat-markdown p { margin: var(--space-1) 0; color: inherit; }
+        .agent-chat-markdown ul, .agent-chat-markdown ol {
+          margin: var(--space-2) 0;
+          padding-left: var(--space-6);
+          color: inherit;
+        }
+        .agent-chat-markdown strong { font-weight: var(--font-weight-semibold); color: inherit; }
         .agent-chat-markdown code {
           background: var(--color-bg-primary);
-          color: var(--color-text-primary);
+          color: inherit;
           padding: 1px 5px;
           border-radius: 3px;
           font-size: 12px;
@@ -162,20 +172,23 @@ export function AgentChat(props: AgentChatProps): React.ReactElement {
         }
         .agent-chat-markdown pre {
           background: var(--color-bg-primary);
-          padding: 10px;
+          padding: var(--space-3);
           border-radius: 6px;
           overflow-x: auto;
           font-size: 12px;
           border: 1px solid var(--color-border-subtle);
+          margin: var(--space-2) 0;
         }
         .agent-chat-markdown pre code {
           background: none;
           border: none;
           padding: 0;
+          color: inherit;
         }
         .agent-chat-markdown a {
           color: var(--color-accent-primary);
           text-decoration: underline;
+          word-break: break-word;
         }
         .agent-chat-markdown table {
           border-collapse: collapse;
@@ -190,10 +203,10 @@ export function AgentChat(props: AgentChatProps): React.ReactElement {
         }
         .agent-chat-markdown th {
           background: var(--color-bg-primary);
-          color: var(--color-text-primary);
+          color: inherit;
         }
         .agent-chat-markdown td {
-          color: var(--color-text-primary);
+          color: inherit;
         }
         .agent-chat-input::placeholder {
           color: var(--color-text-secondary);

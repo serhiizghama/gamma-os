@@ -133,17 +133,18 @@ function MessageBubble({
       style={{
         display: "flex",
         justifyContent: isUser ? "flex-end" : "flex-start",
-        marginBottom: 10,
+        marginBottom: "var(--space-3)",
       }}
     >
       <div
+        className="agent-chat-bubble"
         style={{
-          maxWidth: "80%",
-          padding: "8px 12px",
-          borderRadius: 10,
-          background: isUser ? "var(--color-accent-primary)" : "#0F172A",
-          border: isUser ? "1px solid var(--color-accent-primary)" : "1px solid var(--color-border-subtle)",
-          color: isUser ? "#ffffff" : "var(--color-text-primary)",
+          maxWidth: "85%",
+          padding: "var(--space-2) var(--space-3)",
+          borderRadius: isUser ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
+          background: isUser ? "var(--color-accent-primary)" : "var(--color-bg-secondary)",
+          color: isUser ? "#FFFFFF" : "var(--color-text-primary)",
+          boxShadow: "0 2px 4px rgba(0, 0, 0, 0.1)",
           fontFamily: "var(--font-system)",
           fontSize: 13,
           lineHeight: 1.6,
@@ -171,7 +172,7 @@ function MessageBubble({
             textAlign: "right",
             fontSize: 10,
             color: "var(--color-text-secondary)",
-            marginTop: 4,
+            marginTop: "var(--space-1)",
           }}
         >
           {new Date(msg.ts).toLocaleTimeString([], {
@@ -202,7 +203,7 @@ export function MessageList({
       style={{
         flex: 1,
         overflowY: "auto",
-        padding: "12px 14px",
+        padding: "var(--space-3) var(--space-4)",
         display: "flex",
         flexDirection: "column",
         color: "var(--color-text-primary)",
@@ -215,11 +216,11 @@ export function MessageList({
       {pendingToolLines.length > 0 && (
         <div
           style={{
-            padding: "6px 10px",
+            padding: "var(--space-2) var(--space-3)",
             background: "var(--color-bg-primary)",
             borderRadius: 6,
             border: "1px solid var(--color-border-subtle)",
-            marginBottom: 8,
+            marginBottom: "var(--space-2)",
           }}
         >
           {pendingToolLines.map((line, i) => (
