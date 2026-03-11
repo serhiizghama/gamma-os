@@ -10,16 +10,47 @@ interface MenuBarProps {
   onOpenLaunchpad: () => void;
 }
 
-// ── Status Config ────────────────────────────────────────────────────────
+// ── Status colors (indicator only — no text labels) ───────────────────────
 
-const STATUS_DISPLAY: Record<HealthStatus, { label: string; color: string }> = {
-  ok: { label: "OK", color: "#3B82F6" },
-  degraded: { label: "Degraded", color: "#facc15" },
-  error: { label: "Error", color: "#ff4d4f" },
-  offline: { label: "Offline", color: "#94A3B8" },
+const STATUS_COLOR: Record<HealthStatus, string> = {
+  ok: "#10B981",
+  degraded: "#facc15",
+  error: "#ff4d4f",
+  offline: "#94A3B8",
 };
 
-const MENU_HEIGHT = 48; /* var(--space-12) */
+const MENU_HEIGHT = 32;
+
+// ── OS System Tray Icons (minimal SVG placeholders) ───────────────────────
+
+function WiFiIcon(): React.ReactElement {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <path d="M8 12a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" />
+      <path d="M5 8a4 4 0 0 1 6 0" />
+      <path d="M3 5.5a7 7 0 0 1 10 0" />
+      <path d="M1 3a10 10 0 0 1 14 0" />
+    </svg>
+  );
+}
+
+function BatteryIcon(): React.ReactElement {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <rect x="1" y="5" width="12" height="6" rx="1.5" />
+      <path d="M13 7v2h1.5V7H13Z" fill="currentColor" />
+    </svg>
+  );
+}
+
+function ClockIcon(): React.ReactElement {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <circle cx="8" cy="8" r="6" />
+      <path d="M8 4v4l3 2" strokeLinecap="round" />
+    </svg>
+  );
+}
 
 // ── Component ────────────────────────────────────────────────────────────
 
@@ -28,6 +59,7 @@ export function MenuBar({
   onOpenLaunchpad,
 }: MenuBarProps): React.ReactElement {
   const [health, setHealth] = useState<HealthStatus>("ok");
+  const [time, setTime] = useState(() => new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true }));
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -61,7 +93,15 @@ export function MenuBar({
     };
   }, []);
 
-  const st = STATUS_DISPLAY[health];
+  useEffect(() => {
+    const id = setInterval(() => {
+      setTime(new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true }));
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const statusColor = STATUS_COLOR[health];
+  const isOnline = health === "ok";
 
   return (
     <div
@@ -71,8 +111,8 @@ export function MenuBar({
         top: 0,
         left: 0,
         right: 0,
-        height: "var(--space-12)",
-        minHeight: "var(--space-12)",
+        height: MENU_HEIGHT,
+        minHeight: MENU_HEIGHT,
         background: "rgba(15, 23, 42, 0.65)",
         backdropFilter: "blur(16px) saturate(180%)",
         WebkitBackdropFilter: "blur(16px) saturate(180%)",
@@ -80,72 +120,103 @@ export function MenuBar({
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        padding: `0 var(--space-4)`,
+        padding: "0 16px",
         zIndex: 10000,
         fontFamily: "var(--font-system)",
-        fontSize: 11,
-        letterSpacing: 0.08,
         color: "var(--color-text-primary)",
         userSelect: "none",
       }}
     >
-      {/* Left: Brand + System Status */}
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-4)" }}>
-        <span
-          style={{
-            fontSize: 13,
-            fontWeight: "var(--font-weight-semibold)",
-            letterSpacing: 2,
-          }}
-        >
-          GAMMA OS
-        </span>
-        <span
-          title={`System: ${health}`}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "var(--space-2)",
-            fontSize: 11,
-            color: "var(--color-text-secondary)",
-            cursor: "default",
-          }}
-        >
-          <span
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: "999px",
-              backgroundColor: st.color,
-              boxShadow:
-                health === "ok"
-                  ? "0 0 0 1px rgba(59, 130, 246, 0.35)"
-                  : "0 0 0 1px rgba(148, 163, 184, 0.35)",
-            }}
-          />
-          <span>{st.label}</span>
-        </span>
-      </div>
+      {/* Left: Branding */}
+      <span
+        style={{
+          fontSize: 13,
+          fontWeight: 600,
+          color: "var(--color-text-primary)",
+          letterSpacing: 2,
+        }}
+      >
+        Gamma OS
+      </span>
 
-      {/* Right: Global application menu */}
-      <div className="desktop-shell__menu" style={{ display: "flex", alignItems: "center", gap: "var(--space-4)" }}>
+      {/* Right: System Tray */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 16,
+        }}
+      >
         <button
-          className="desktop-shell__menu-item"
           onClick={onOpenLaunchpad}
           title="Apps"
+          style={TRAY_BTN}
+          aria-label="Open Apps"
         >
-          Apps
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <rect x="2" y="2" width="4" height="4" rx="0.5" />
+            <rect x="10" y="2" width="4" height="4" rx="0.5" />
+            <rect x="2" y="10" width="4" height="4" rx="0.5" />
+            <rect x="10" y="10" width="4" height="4" rx="0.5" />
+          </svg>
         </button>
         <button
-          className="desktop-shell__menu-item"
           onClick={onOpenArchitect}
           title="System Architect"
+          style={TRAY_BTN}
+          aria-label="System Architect"
         >
-          Architect
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <circle cx="8" cy="5" r="1.5" />
+            <path d="M8 8v4M6 10h4" stroke="currentColor" strokeWidth="1.2" fill="none" />
+          </svg>
         </button>
+        <span style={TRAY_ICON} title="Wi-Fi">
+          <WiFiIcon />
+        </span>
+        <span style={TRAY_ICON} title="Battery">
+          <BatteryIcon />
+        </span>
+        <span style={TRAY_ICON} title={time}>
+          <ClockIcon />
+        </span>
+        <div
+          title={`System status: ${health}`}
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: "999px",
+            backgroundColor: statusColor,
+            boxShadow: isOnline ? "0 0 8px rgba(16, 185, 129, 0.4)" : "none",
+            flexShrink: 0,
+          }}
+        />
       </div>
     </div>
   );
 }
+
+const TRAY_BTN: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: 28,
+  height: 28,
+  padding: 0,
+  background: "transparent",
+  border: "none",
+  borderRadius: 6,
+  cursor: "pointer",
+  color: "var(--color-text-primary)",
+  opacity: 0.9,
+};
+
+const TRAY_ICON: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  color: "var(--color-text-primary)",
+  opacity: 0.9,
+};
 
 export { MENU_HEIGHT };

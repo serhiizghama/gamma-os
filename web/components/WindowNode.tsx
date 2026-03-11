@@ -201,7 +201,7 @@ export function WindowNode({ id }: WindowNodeProps): React.ReactElement | null {
     // Outer shell: position only — NO animation (animation overrides transform)
     <div
       ref={shellRef}
-      className={`window${win.isMinimized ? " window--minimized" : ""}`}
+      className={`window${win.isMinimized ? " window--minimized" : ""}${isFocused ? " window--focused" : ""}`}
       onPointerDown={handleShellPointerDown}
       style={{
         "--win-x": `${win.coordinates.x}px`,
@@ -218,10 +218,6 @@ export function WindowNode({ id }: WindowNodeProps): React.ReactElement | null {
           background: "var(--window-bg)",
           backdropFilter: "var(--glass-blur)",
           WebkitBackdropFilter: "var(--glass-blur)",
-          border: isFocused ? "1px solid var(--color-accent-primary)" : "var(--window-border)",
-            boxShadow: isFocused
-              ? "var(--shadow-elevated)"
-              : "var(--glass-shadow)",
           position: "relative", // so ResizeHandles can be absolute inside
         } as React.CSSProperties}
       >
