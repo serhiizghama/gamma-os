@@ -150,6 +150,17 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
     try {
       this.ws = new WebSocket(this.gatewayUrl);
 
+      // Attach low-level error handler immediately after socket creation to
+      // prevent native errors from bubbling to the Node.js event loop.
+      this.ws.on('error', (err: Error) => {
+        try {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.logger.error(`WebSocket error: ${msg}`);
+        } catch {
+          // Swallow all logger or formatting failures to guarantee isolation
+        }
+      });
+
       this.ws.on('open', () => {
         this.logger.log(`WebSocket opened to ${this.gatewayUrl}`);
       });
@@ -166,10 +177,6 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
       this.ws.on('close', (code: number, reason: Buffer) => {
         this.logger.warn(`WebSocket closed: ${code} ${reason.toString()}`);
         this.onDisconnect();
-      });
-
-      this.ws.on('error', (err: Error) => {
-        this.logger.error(`WebSocket error: ${err.message}`);
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -811,7 +818,18 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
       this.logger.warn('Cannot send — WebSocket not open');
       return;
     }
-    this.ws.send(JSON.stringify(data));
+    try {
+      this.ws.send(JSON.stringify(data));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Failed to send WebSocket frame: ${msg}`);
+      // Best-effort cleanup: treat as a disconnect so higher layers can react.
+      try {
+        this.onDisconnect();
+      } catch {
+        // onDisconnect errors must never escape the send path
+      }
+    }
   }
 
   waitForResponse(frameId: string, timeoutMs = 5000): Promise<GWFrame> {
