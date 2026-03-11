@@ -105,6 +105,21 @@ export interface ScaffoldResult {
   modulePath?: string;
 }
 
+export interface JailedFileSaveParams {
+  appId: string;
+  /** Path inside the app bundle directory (e.g. "MyApp.tsx", "context.md", "agent-prompt.md") */
+  relativePath: string;
+  content: string;
+  encoding?: 'utf8' | 'base64';
+}
+
+export interface JailedFileSaveResult {
+  ok: boolean;
+  filePath?: string;
+  updatedAt?: number;
+  error?: string;
+}
+
 /**
  * Scaffold Service — Path Jail, Security Scanner, Smart Commit (spec §9.2–§9.6).
  *
@@ -399,6 +414,93 @@ export class ScaffoldService {
 
     this.logger.log(`Scaffolded app '${safeId}' → ${modulePath}`);
     return { ok: true, filePath, commitHash, modulePath };
+  }
+
+  /**
+   * Jailed, app-local file save for AI agents (File System tool).
+   *
+   * - Writes directly under web/apps/generated/{appId}/ via jailPath()
+   * - Never touches the root git repo or executes git push
+   * - Refreshes the app's registry updatedAt and broadcasts component_ready
+   */
+  async saveAppFileFromAgent(
+    params: JailedFileSaveParams,
+  ): Promise<JailedFileSaveResult> {
+    const safeId = params.appId.replace(/[^a-z0-9-]/gi, '');
+    if (!safeId) {
+      return { ok: false, error: 'Invalid appId' };
+    }
+
+    try {
+      const targetPath = this.jailPath(`${safeId}/${params.relativePath}`);
+      await fs.mkdir(path.dirname(targetPath), { recursive: true });
+
+      const buffer =
+        params.encoding === 'base64'
+          ? Buffer.from(params.content, 'base64')
+          : Buffer.from(params.content, 'utf8');
+
+      await fs.writeFile(targetPath, buffer);
+
+      const now = Date.now();
+
+      // Refresh app registry entry without mutating other fields
+      let entry: import('@gamma/types').AppRegistryEntry | null = null;
+      try {
+        const raw = await this.redis.hget('gamma:app:registry', safeId);
+        if (raw) {
+          entry = JSON.parse(raw) as import('@gamma/types').AppRegistryEntry;
+        }
+      } catch {
+        entry = null;
+      }
+
+      const pascalName = pascal(safeId);
+      const modulePath =
+        entry?.modulePath ??
+        `./web/apps/generated/${safeId}/${pascalName}App`;
+      const bundlePath = entry?.bundlePath ?? `./web/apps/generated/${safeId}/`;
+
+      const registryEntry: import('@gamma/types').AppRegistryEntry = {
+        appId: safeId,
+        displayName: entry?.displayName ?? pascalName,
+        modulePath,
+        bundlePath,
+        createdAt: entry?.createdAt ?? now,
+        updatedAt: now,
+        hasAgent: entry?.hasAgent ?? false,
+      };
+
+      await this.redis.hset(
+        'gamma:app:registry',
+        safeId,
+        JSON.stringify(registryEntry),
+      );
+
+      // Broadcast component_ready so DynamicAppRenderer hot-reloads
+      await this.redis.xadd(
+        'gamma:sse:broadcast',
+        '*',
+        ...flattenEntry({
+          type: 'component_ready',
+          appId: safeId,
+          modulePath,
+          updatedAt: now,
+        }),
+      );
+
+      this.logger.log(
+        `Agent saved file for app '${safeId}' → ${params.relativePath}`,
+      );
+
+      return { ok: true, filePath: targetPath, updatedAt: now };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `Failed to save jailed file for app '${params.appId}': ${msg}`,
+      );
+      return { ok: false, error: msg };
+    }
   }
 
   /** Return full app registry from Redis for frontend */

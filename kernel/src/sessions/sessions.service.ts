@@ -1,10 +1,4 @@
-import {
-  Injectable,
-  Inject,
-  Logger,
-  ServiceUnavailableException,
-  forwardRef,
-} from '@nestjs/common';
+import { Injectable, Inject, Logger, forwardRef } from '@nestjs/common';
 import Redis from 'ioredis';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -35,6 +29,15 @@ function flattenEntry(obj: Record<string, unknown>): string[] {
     args.push(k, typeof v === 'string' ? v : JSON.stringify(v));
   }
   return args;
+}
+
+export interface SendMessageResult {
+  ok: boolean;
+  error?: {
+    code: string;
+    message: string;
+    detail?: string;
+  };
 }
 
 @Injectable()
@@ -170,9 +173,12 @@ export class SessionsService {
 
   // ── v1.6: Send user message to agent ──────────────────────────────────
 
-  async sendMessage(windowId: string, message: string): Promise<boolean> {
+  async sendMessage(
+    windowId: string,
+    message: string,
+  ): Promise<SendMessageResult | null> {
     const session = await this.findByWindowId(windowId);
-    if (!session) return false;
+    if (!session) return null;
 
     const nowMs = Date.now();
 
@@ -201,28 +207,66 @@ export class SessionsService {
     );
 
     // 3. Forward to OpenClaw Gateway (fire-and-forget dispatch)
-    const { accepted } = this.gatewayWs.sendMessage(
-      session.sessionKey,
-      message,
-      windowId,
-    );
-    if (!accepted) {
+    try {
+      const { accepted } = this.gatewayWs.sendMessage(
+        session.sessionKey,
+        message,
+        windowId,
+      );
+
+      if (!accepted) {
+        const errorMessage = '[OpenClaw] Gateway unreachable';
+        await this.redis.xadd(
+          `gamma:sse:${windowId}`,
+          '*',
+          ...flattenEntry({
+            type: 'lifecycle_error',
+            windowId,
+            runId: '',
+            message: 'Gateway not connected — message not sent',
+          }),
+        );
+        this.logger.error(errorMessage);
+        return {
+          ok: false,
+          error: {
+            code: 'GATEWAY_DISCONNECTED',
+            message: errorMessage,
+          },
+        };
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const errorMessage = '[OpenClaw] Gateway unreachable';
+      this.logger.error(`${errorMessage}: ${msg}`);
       await this.redis.xadd(
-        `gamma:sse:${windowId}`, '*',
+        `gamma:sse:${windowId}`,
+        '*',
         ...flattenEntry({
           type: 'lifecycle_error',
           windowId,
           runId: '',
-          message: 'Gateway not connected — message not sent',
+          message: errorMessage,
         }),
       );
-      throw new ServiceUnavailableException('OpenClaw Gateway not connected');
+      return {
+        ok: false,
+        error: {
+          code: 'GATEWAY_SEND_FAILED',
+          message: errorMessage,
+          detail: msg,
+        },
+      };
     }
 
     // 5. Update lastEventAt for GC freshness tracking
-    await this.redis.hset(`gamma:state:${windowId}`, 'lastEventAt', String(nowMs));
+    await this.redis.hset(
+      `gamma:state:${windowId}`,
+      'lastEventAt',
+      String(nowMs),
+    );
 
-    return true;
+    return { ok: true };
   }
 
   /**

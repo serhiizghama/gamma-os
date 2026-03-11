@@ -893,14 +893,43 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
       .replace('ws://', 'http://')
       .replace('wss://', 'https://');
 
-    const res = await fetch(`${httpUrl}/tools/invoke`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.gatewayToken}`,
-      },
-      body: JSON.stringify({ tool, args, sessionKey }),
-    });
-    return res.json();
+    const url = `${httpUrl}/tools/invoke`;
+
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.gatewayToken}`,
+        },
+        body: JSON.stringify({ tool, args, sessionKey }),
+      });
+
+      // Even non-2xx responses should surface structured JSON when possible
+      try {
+        return await res.json();
+      } catch {
+        return {
+          ok: false,
+          error: {
+            code: 'GATEWAY_HTTP_INVALID_JSON',
+            message: 'Gateway returned non-JSON response',
+            status: res.status,
+          },
+        };
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const errorMessage = '[OpenClaw] Gateway unreachable';
+      this.logger.error(`${errorMessage}: ${msg}`);
+      return {
+        ok: false,
+        error: {
+          code: 'GATEWAY_HTTP_UNREACHABLE',
+          message: errorMessage,
+          detail: msg,
+        },
+      };
+    }
   }
 }
