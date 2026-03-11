@@ -2,7 +2,6 @@ import React, {
   useRef,
   useCallback,
   useEffect,
-  lazy,
   Suspense,
   useState,
 } from "react";
@@ -13,33 +12,7 @@ import { DynamicAppRenderer } from "./DynamicAppRenderer";
 import { AgentChat } from "./AgentChat";
 import { useAgentStream } from "../hooks/useAgentStream";
 import { API_BASE } from "../constants/api";
-
-// ── Built-in system apps — lazy-load per appId ─────────────────────────────
-const TerminalApp = lazy(() =>
-  import("../apps/system/terminal/TerminalApp").then((m) => ({
-    default: m.TerminalApp,
-  })),
-);
-const SettingsApp = lazy(() =>
-  import("../apps/system/settings/SettingsApp").then((m) => ({
-    default: m.SettingsApp,
-  })),
-);
-const BrowserApp = lazy(() =>
-  import("../apps/system/browser/BrowserApp").then((m) => ({
-    default: m.BrowserApp,
-  })),
-);
-const NotesApp = lazy(() =>
-  import("../apps/system/notes/NotesApp").then((m) => ({
-    default: m.NotesApp,
-  })),
-);
-const KernelMonitorApp = lazy(() =>
-  import("../apps/system/kernel-monitor/KernelMonitorApp").then((m) => ({
-    default: m.KernelMonitorApp,
-  })),
-);
+import { getSystemApp } from "../registry/systemApps";
 
 function EmbeddedAgentChat({
   appId,
@@ -86,24 +59,13 @@ function AppContent({
     </Suspense>
   );
   if (registryEntry) {
-    return (
-      <DynamicAppRenderer appId={appId} entry={registryEntry} />
-    );
+    return <DynamicAppRenderer appId={appId} entry={registryEntry} />;
   }
-  switch (appId) {
-    case "terminal":
-      return wrap(<TerminalApp />, "Terminal");
-    case "settings":
-      return wrap(<SettingsApp />, "Settings");
-    case "browser":
-      return wrap(<BrowserApp />, "Browser");
-    case "notes":
-      return wrap(<NotesApp />, "Notes");
-    case "kernel-monitor":
-      return wrap(<KernelMonitorApp />, "Kernel Monitor");
-    default:
-      return <AppPlaceholder label={appId} />;
+  const SystemApp = getSystemApp(appId);
+  if (SystemApp) {
+    return wrap(<SystemApp />, appId);
   }
+  return <AppPlaceholder label={appId} />;
 }
 
 function AppPlaceholder({ label }: { label: string }): React.ReactElement {
