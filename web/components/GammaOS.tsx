@@ -78,9 +78,11 @@ export function GammaOS(): React.ReactElement {
   useAppRegistry(); // fetch registry + subscribe to component_ready/removed
   useSystemEvents(); // mock SSE → real EventSource in production
 
+  if (booting) {
+    return <BootScreen onDone={handleBootDone} />;
+  }
+
   return (
-    <>
-      {booting && <BootScreen onDone={handleBootDone} />}
     <div
       id="gamma-os"
       className="desktop-shell"
@@ -135,6 +137,5 @@ export function GammaOS(): React.ReactElement {
         }}
       />
     </div>
-    </>
   );
 }
