@@ -60,25 +60,26 @@ export function TitleBar({
 
       <span className="window-titlebar__title">{title}</span>
 
-      {/* AI Assistant toggle — only active when hasAgent */}
+      {/* AI Assistant toggle — force-enabled for all apps (UI testing) */}
       <div
         className="window-titlebar__spacer"
         style={{ display: "flex", alignItems: "center", gap: 4 }}
+        onPointerDown={(e) => e.stopPropagation()}
       >
         <button
           onClick={(e) => {
             e.stopPropagation();
-            if (hasAgent && onToggleAgent) onToggleAgent();
+            onToggleAgent?.();
           }}
-          title={hasAgent ? "Toggle AI Assistant" : "No agent configured"}
-          aria-label={hasAgent ? "Toggle AI Assistant" : "No agent configured"}
+          title="Toggle AI Assistant"
+          aria-label="Toggle AI Assistant"
           style={{
             flexShrink: 0,
             background: agentPanelOpen ? "rgba(255,255,255,0.08)" : "transparent",
             border: "none",
             borderRadius: 4,
-            cursor: hasAgent ? "pointer" : "default",
-            opacity: hasAgent ? 1 : 0.4,
+            cursor: "pointer",
+            opacity: 1,
             padding: "4px 6px",
             fontSize: 14,
             lineHeight: 1,
@@ -88,11 +89,9 @@ export function TitleBar({
             transition: "opacity 0.15s, color 0.15s, background 0.15s",
           }}
           onMouseEnter={(e) => {
-            if (hasAgent) {
-              e.currentTarget.style.color = "var(--color-text-primary)";
-              if (!agentPanelOpen) {
-                e.currentTarget.style.background = "rgba(255,255,255,0.05)";
-              }
+            e.currentTarget.style.color = "var(--color-text-primary)";
+            if (!agentPanelOpen) {
+              e.currentTarget.style.background = "rgba(255,255,255,0.05)";
             }
           }}
           onMouseLeave={(e) => {

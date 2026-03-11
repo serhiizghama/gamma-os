@@ -271,22 +271,22 @@ export function WindowNode({ id }: WindowNodeProps): React.ReactElement | null {
 
   // ─── AI Assistant toggle: create session on first open, then toggle panel ──
   const handleToggleAgent = useCallback(async () => {
-    if (!hasAgent || !win) return;
-    const windowId = `app-owner-${win.appId}`;
+    if (!win) return;
+    const sessionWindowId = `app-owner-${win.appId}`;
     if (!agentPanelOpen) {
       try {
         const res = await fetch(`${API_BASE}/api/sessions`);
         if (!res.ok) return;
         const sessions: { windowId: string }[] = await res.json();
-        const exists = sessions.some((s) => s.windowId === windowId);
+        const exists = sessions.some((s) => s.windowId === sessionWindowId);
         if (!exists) {
           await fetch(`${API_BASE}/api/sessions`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              windowId,
+              windowId: sessionWindowId,
               appId: win.appId,
-              sessionKey: windowId,
+              sessionKey: sessionWindowId,
               agentId: "app-owner",
             }),
           });
@@ -296,7 +296,7 @@ export function WindowNode({ id }: WindowNodeProps): React.ReactElement | null {
       }
     }
     toggleWindowAgentPanel(id);
-  }, [id, win, hasAgent, agentPanelOpen, toggleWindowAgentPanel]);
+  }, [id, win, agentPanelOpen, toggleWindowAgentPanel]);
 
   // ─── Agent panel top-edge resize (drag handle) ────────────────────────────
   const onPanelResizeDown = useCallback(
@@ -386,7 +386,7 @@ export function WindowNode({ id }: WindowNodeProps): React.ReactElement | null {
           </div>
 
           {/* Embedded AgentChat — slides up when ✨ toggled, resizable 20–60% */}
-          {agentPanelOpen && hasAgent && (
+          {agentPanelOpen && (
             <div
               style={{
                 flex: `0 0 ${agentPanelHeight * 100}%`,
@@ -394,7 +394,10 @@ export function WindowNode({ id }: WindowNodeProps): React.ReactElement | null {
                 display: "flex",
                 flexDirection: "column",
                 position: "relative",
-                borderTop: "1px solid var(--color-border-subtle)",
+                borderTop: "2px solid var(--color-border-subtle)",
+                background: "rgba(15, 23, 42, 0.5)",
+                borderRadius: "8px 8px 0 0",
+                boxShadow: "0 -2px 12px rgba(0,0,0,0.15)",
               }}
             >
               {/* Resize handle (top edge of panel) */}
