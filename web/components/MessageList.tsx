@@ -301,7 +301,9 @@ export function MessageList({
       className="agent-chat-message-list"
       style={{
         flex: 1,
+        minHeight: 0,
         overflowY: "auto",
+        overflowX: "hidden",
         padding: "var(--space-3) var(--space-4)",
         display: "flex",
         flexDirection: "column",

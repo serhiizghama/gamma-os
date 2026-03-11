@@ -370,12 +370,13 @@ export function WindowNode({ id }: WindowNodeProps): React.ReactElement | null {
             display: "flex",
             flexDirection: "column",
             minHeight: 0,
+            position: "relative",
           }}
         >
-          {/* App content — shrinks when agent panel is open */}
+          {/* App content — full height; panel overlays from bottom when open */}
           <div
             style={{
-              flex: agentPanelOpen ? `0 0 ${(1 - agentPanelHeight) * 100}%` : 1,
+              flex: 1,
               minHeight: 0,
               overflow: "hidden",
               display: "flex",
@@ -385,19 +386,23 @@ export function WindowNode({ id }: WindowNodeProps): React.ReactElement | null {
             <AppContent appId={win.appId} registryEntry={registryEntry} />
           </div>
 
-          {/* Embedded AgentChat — slides up when ✨ toggled, resizable 20–60% */}
+          {/* Embedded AgentChat — absolutely anchored to bottom, overlays app content */}
           {agentPanelOpen && (
             <div
               style={{
-                flex: `0 0 ${agentPanelHeight * 100}%`,
-                minHeight: 0,
+                position: "absolute",
+                bottom: 0,
+                left: 0,
+                right: 0,
+                height: `${agentPanelHeight * 100}%`,
+                minHeight: 120,
                 display: "flex",
                 flexDirection: "column",
-                position: "relative",
+                zIndex: 50,
+                background: "var(--color-bg-secondary)",
                 borderTop: "2px solid var(--color-border-subtle)",
-                background: "rgba(15, 23, 42, 0.5)",
                 borderRadius: "8px 8px 0 0",
-                boxShadow: "0 -2px 12px rgba(0,0,0,0.15)",
+                boxShadow: "0 -4px 24px rgba(0,0,0,0.25)",
               }}
             >
               {/* Resize handle (top edge of panel) */}
@@ -416,7 +421,15 @@ export function WindowNode({ id }: WindowNodeProps): React.ReactElement | null {
                 aria-label="Resize chat panel"
                 role="separator"
               />
-              <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+              <div
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  overflow: "hidden",
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+              >
                 <EmbeddedAgentChat appId={win.appId} title={win.title} onClose={() => toggleWindowAgentPanel(id)} />
               </div>
             </div>

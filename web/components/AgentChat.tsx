@@ -122,23 +122,31 @@ export function AgentChat(props: AgentChatProps): React.ReactElement {
       style={{
         display: "flex",
         flexDirection: "column",
-        height: isEmbedded ? "40%" : "100%",
+        height: "100%",
         width: "100%",
         background: "var(--color-bg-secondary)",
         borderRadius: isEmbedded ? "10px 10px 0 0" : 0,
         border: isEmbedded ? `1px solid var(--color-border-subtle)` : "none",
-        position: isEmbedded ? "absolute" : "relative",
-        bottom: isEmbedded ? 0 : undefined,
-        left: isEmbedded ? 0 : undefined,
         overflow: "hidden",
+        minHeight: 0,
       }}
     >
       <ChatHeader title={title} status={status} accentColor={accentColor} onClose={onClose} />
-      <MessageList
-        messages={messages}
-        pendingToolLines={pendingToolLines}
-        accentColor={accentColor}
-      />
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <MessageList
+          messages={messages}
+          pendingToolLines={pendingToolLines}
+          accentColor={accentColor}
+        />
+      </div>
       <ChatInput
         status={status}
         accentColor={accentColor}
