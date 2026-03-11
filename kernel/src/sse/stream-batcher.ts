@@ -30,14 +30,14 @@ export class StreamBatcher {
 
   /**
    * Push an event through the batcher.
-   * - thinking / assistant_delta → batched (50ms debounce)
+   * - thinking / assistant_delta / assistant_update → batched (50ms debounce)
    * - everything else → immediate passthrough
    */
   push(event: Record<string, unknown>): void {
     const type = event['type'] as string | undefined;
 
-    // Only batch thinking and assistant_delta
-    if (type !== 'thinking' && type !== 'assistant_delta') {
+    // Only batch thinking and assistant text (delta + update both carry cumulative text)
+    if (type !== 'thinking' && type !== 'assistant_delta' && type !== 'assistant_update') {
       // Immediate passthrough — also force-flush any pending batch for this window
       const windowId = event['windowId'] as string | undefined;
       const runId = event['runId'] as string | undefined;
@@ -68,6 +68,7 @@ export class StreamBatcher {
     if (type === 'thinking') {
       batch.thinkingText = event['text'] as string;
     } else {
+      // assistant_delta or assistant_update — both are cumulative
       batch.deltaText = event['text'] as string;
     }
 

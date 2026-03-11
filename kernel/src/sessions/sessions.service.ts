@@ -1,4 +1,4 @@
-import { Injectable, Inject, Logger } from '@nestjs/common';
+import { Injectable, Inject, Logger, ServiceUnavailableException } from '@nestjs/common';
 import Redis from 'ioredis';
 import { ulid } from 'ulid';
 import { REDIS_CLIENT } from '../redis/redis.constants';
@@ -168,8 +168,20 @@ export class SessionsService {
       }),
     );
 
-    // 3. Forward to OpenClaw Gateway
-    await this.gatewayWs.sendMessage(session.sessionKey, message);
+    // 3. Forward to OpenClaw Gateway (fire-and-forget dispatch)
+    const { accepted } = this.gatewayWs.sendMessage(session.sessionKey, message, windowId);
+    if (!accepted) {
+      await this.redis.xadd(
+        `gamma:sse:${windowId}`, '*',
+        ...flattenEntry({
+          type: 'lifecycle_error',
+          windowId,
+          runId: '',
+          message: 'Gateway not connected — message not sent',
+        }),
+      );
+      throw new ServiceUnavailableException('OpenClaw Gateway not connected');
+    }
 
     // 4. Update lastEventAt for GC freshness tracking
     await this.redis.hset(`gamma:state:${windowId}`, 'lastEventAt', String(nowMs));

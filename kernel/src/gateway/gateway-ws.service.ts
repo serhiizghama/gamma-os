@@ -66,6 +66,9 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
   // Request/response tracking
   private pendingRequests = new Map<string, PendingRequest>();
 
+  /** Inflight chat.send: frameId → { windowId } for error routing to SSE */
+  private inflightChatSend = new Map<string, { windowId: string }>();
+
   // Session → Window mapping (populated externally by SessionsService)
   public sessionToWindow = new Map<string, string>();
 
@@ -195,6 +198,7 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
 
     // Clear run tracking to avoid orphaned counters when runs are interrupted
     this.runStepCounters.clear();
+    this.inflightChatSend.clear();
 
     for (const [id, req] of this.pendingRequests) {
       clearTimeout(req.timer);
@@ -257,8 +261,18 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
   // ── Frame handling ────────────────────────────────────────────────────
 
   private handleFrame(frame: GWFrame): void {
-    // Response to pending request
+    // Response to request
     if (frame.type === 'res' && frame.id) {
+      // chat.send is fire-and-forget — route errors to SSE
+      const chatInflight = this.inflightChatSend.get(frame.id);
+      if (chatInflight) {
+        this.inflightChatSend.delete(frame.id);
+        if (!frame.ok) {
+          this.pushChatSendError(chatInflight.windowId, frame);
+        }
+        return;
+      }
+
       const pending = this.pendingRequests.get(frame.id);
       if (pending) {
         clearTimeout(pending.timer);
@@ -699,6 +713,30 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
+  /** Push chat.send rejection to SSE so client sees the error */
+  private pushChatSendError(windowId: string, frame: GWFrame): void {
+    const errMsg =
+      typeof frame.error === 'string'
+        ? frame.error
+        : (frame.error as Record<string, unknown>)?.message ?? JSON.stringify(frame.error ?? 'Gateway rejected message');
+    this.logger.warn(`chat.send rejected for ${windowId}: ${errMsg}`);
+    this.redis
+      .xadd(
+        `gamma:sse:${windowId}`,
+        '*',
+        ...flattenEntry({
+          type: 'lifecycle_error',
+          windowId,
+          runId: '',
+          message: String(errMsg),
+        }),
+      )
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.error(`Failed to push chat.send error to SSE: ${msg}`);
+      });
+  }
+
   // ── Gateway status broadcast (spec §7.2) ──────────────────────────────
 
   private broadcastGatewayStatus(status: 'connected' | 'disconnected'): void {
@@ -802,13 +840,16 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
   }
 
   // ── v1.6: Send user message to agent session ─────────────────────────
+  // Fire-and-forget: returns immediately after dispatch. Ack/errors are routed
+  // asynchronously via handleFrame → pushChatSendError for rejections.
 
-  async sendMessage(sessionKey: string, message: string): Promise<void> {
+  sendMessage(sessionKey: string, message: string, windowId: string): { accepted: boolean } {
     if (!this.connected) {
       this.logger.warn(`sendMessage: not connected, dropping message for ${sessionKey}`);
-      return;
+      return { accepted: false };
     }
     const frameId = ulid();
+    this.inflightChatSend.set(frameId, { windowId });
     this.logger.log(`sendMessage: ${sessionKey} → ${message.slice(0, 60)}... (frame=${frameId})`);
     this.send({
       type: 'req',
@@ -816,12 +857,14 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
       method: 'chat.send',
       params: { sessionKey, message, idempotencyKey: frameId },
     });
-    try {
-      const response = await this.waitForResponse(frameId, 10000);
-      this.logger.log(`sendMessage response: ${JSON.stringify(response).slice(0, 200)}`);
-    } catch (err) {
-      this.logger.warn(`sendMessage: no ack within timeout for ${sessionKey}: ${err}`);
-    }
+    // 10s timeout: if no ack, clean up inflight (avoid leak). Error routing
+    // only applies when we get res with ok:false; timeout is silent.
+    setTimeout(() => {
+      if (this.inflightChatSend.delete(frameId)) {
+        this.logger.debug(`sendMessage: inflight ${frameId} cleaned up (timeout)`);
+      }
+    }, 10_000);
+    return { accepted: true };
   }
 
   // ── v1.6: Explicit session kill — free Gateway resources ────────────
