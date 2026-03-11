@@ -144,6 +144,7 @@ export function AgentChat(props: AgentChatProps): React.ReactElement {
         <MessageList
           messages={messages}
           pendingToolLines={pendingToolLines}
+          status={status}
           accentColor={accentColor}
         />
       </div>

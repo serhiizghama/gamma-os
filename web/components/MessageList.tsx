@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import type { AgentStatus } from "@gamma/types";
+import { useThrottledValue } from "../hooks/useThrottledValue";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -24,6 +26,7 @@ interface MessageListProps {
   messages: ChatMessage[];
   pendingToolLines: string[];
   accentColor: string;
+  status: AgentStatus;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -213,11 +216,19 @@ function ToolCallLine({
 
 function MessageBubble({
   msg,
+  status,
+  isStreaming,
 }: {
   msg: ChatMessage;
   accentColor: string;
+  status: AgentStatus;
+  isStreaming: boolean;
 }): React.ReactElement {
   const isUser = msg.role === "user";
+
+  // Throttle assistant markdown text while streaming to cap AST recalculation.
+  const throttledText = useThrottledValue(msg.text, 500, status);
+  const displayText = isStreaming ? throttledText : msg.text;
 
   return (
     <div
@@ -260,7 +271,7 @@ function MessageBubble({
                 img: SafeMarkdownImage,
               }}
             >
-              {msg.text}
+              {displayText}
             </ReactMarkdown>
           </div>
         )}
@@ -289,8 +300,14 @@ export function MessageList({
   messages,
   pendingToolLines,
   accentColor,
+  status,
 }: MessageListProps): React.ReactElement {
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  const lastAssistantIndex = messages.reduce<number>(
+    (idx, msg, index) => (msg.role === "assistant" ? index : idx),
+    -1,
+  );
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -312,9 +329,23 @@ export function MessageList({
         backgroundRepeat: "repeat",
       }}
     >
-      {messages.map((msg) => (
-        <MessageBubble key={msg.id} msg={msg} accentColor={accentColor} />
-      ))}
+      {messages.map((msg, index) => {
+        const isStreaming =
+          status === "running" &&
+          msg.role === "assistant" &&
+          index === lastAssistantIndex &&
+          index === messages.length - 1;
+
+        return (
+          <MessageBubble
+            key={msg.id}
+            msg={msg}
+            accentColor={accentColor}
+            status={status}
+            isStreaming={isStreaming}
+          />
+        );
+      })}
 
       {pendingToolLines.length > 0 && (
         <div

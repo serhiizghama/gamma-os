@@ -115,39 +115,7 @@ function NetworkCanvas() {
 // ── Glitch text ───────────────────────────────────────────────────
 function GlitchText({ children }: { children: string }) {
   return (
-    <div style={{ position: "relative", display: "inline-block" }}>
-      {/* Glitch layers */}
-      <span
-        aria-hidden
-        style={{
-          position: "absolute",
-          inset: 0,
-          color: "#00ffff",
-          clipPath: "inset(20% 0 60% 0)",
-          transform: "translateX(-3px)",
-          opacity: 0.7,
-          animation: "glitch1 2.4s infinite",
-        }}
-      >
-        {children}
-      </span>
-      <span
-        aria-hidden
-        style={{
-          position: "absolute",
-          inset: 0,
-          color: "#0040ff",
-          clipPath: "inset(60% 0 10% 0)",
-          transform: "translateX(3px)",
-          opacity: 0.7,
-          animation: "glitch2 2.7s infinite",
-        }}
-      >
-        {children}
-      </span>
-      {/* Main text */}
-      <span style={{ position: "relative" }}>{children}</span>
-    </div>
+    <span>{children}</span>
   );
 }
 
@@ -208,7 +176,7 @@ export function BootScreen({ onDone }: { onDone: () => void }) {
       style={{
         position: "fixed",
         inset: 0,
-        background: "#000a0f",
+        background: "var(--color-bg-base)",
         zIndex: 99999,
         display: "flex",
         alignItems: "center",
@@ -239,9 +207,7 @@ export function BootScreen({ onDone }: { onDone: () => void }) {
             letterSpacing: "0.12em",
             textTransform: "uppercase",
             fontFamily: "'SF Pro Display', -apple-system, sans-serif",
-            color: "#00b4ff",
-            textShadow: "0 0 30px rgba(0,180,255,0.8), 0 0 60px rgba(0,100,255,0.4)",
-            animation: "bootPulse 2s ease-in-out infinite",
+            color: "var(--color-accent-primary)",
           }}
         >
           <GlitchText>Gamma OS</GlitchText>

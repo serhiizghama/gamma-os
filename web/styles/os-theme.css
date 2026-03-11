@@ -122,100 +122,7 @@
 }
 
 
-/* ── Live Background (Twilight Blue atmospheric) ─────────────── */
-.live-bg {
-  position: absolute;
-  inset: 0;
-  /* Atmospheric gradient — Twilight Blue base */
-  background: linear-gradient(135deg, #0F172A 0%, #151F32 100%);
-  background-size: 300% 300%;
-  animation: bgBreath 28s ease-in-out infinite;
-  overflow: hidden;
-}
-
-/* Blob container */
-.live-bg__blobs {
-  position: absolute;
-  inset: 0;
-}
-
-.live-bg__blob {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(100px);
-  will-change: transform;
-  mix-blend-mode: screen;
-}
-
-.live-bg__blob--1 {
-  width: 65vw; height: 65vw;
-  top: -20%; left: -15%;
-  background: radial-gradient(circle, var(--blob-1) 0%, transparent 70%);
-  opacity: 0.38;
-  animation: blobDrift1 55s ease-in-out infinite;
-}
-.live-bg__blob--2 {
-  width: 58vw; height: 58vw;
-  top: 8%; right: -20%;
-  background: radial-gradient(circle, var(--blob-2) 0%, transparent 70%);
-  opacity: 0.32;
-  animation: blobDrift2 70s ease-in-out infinite;
-}
-.live-bg__blob--3 {
-  width: 50vw; height: 50vw;
-  bottom: -15%; left: 15%;
-  background: radial-gradient(circle, var(--blob-3) 0%, transparent 70%);
-  opacity: 0.28;
-  animation: blobDrift3 62s ease-in-out infinite;
-}
-.live-bg__blob--4 {
-  width: 44vw; height: 44vw;
-  top: 28%; left: 28%;
-  background: radial-gradient(circle, var(--blob-4) 0%, transparent 70%);
-  opacity: 0.25;
-  animation: blobDrift4 80s ease-in-out infinite;
-}
-.live-bg__blob--5 {
-  width: 38vw; height: 38vw;
-  bottom: 4%; right: 6%;
-  background: radial-gradient(circle, var(--blob-5) 0%, transparent 70%);
-  opacity: 0.30;
-  animation: blobDrift5 60s ease-in-out infinite;
-}
-
-/* Noise texture — subtle grain */
-.live-bg::after {
-  content: '';
-  position: absolute; inset: 0;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
-  background-size: 256px 256px;
-  opacity: 0.30;
-  pointer-events: none;
-}
-
-/* ── Boot Screen animations ───────────────────────────────────── */
-@keyframes bootPulse {
-  0%, 100% { text-shadow: 0 0 30px rgba(0,180,255,0.8), 0 0 60px rgba(0,100,255,0.4); }
-  50%       { text-shadow: 0 0 50px rgba(0,220,255,1.0), 0 0 100px rgba(0,140,255,0.7); }
-}
-@keyframes glitch1 {
-  0%, 90%, 100% { transform: translateX(-3px); opacity: 0; }
-  92%           { transform: translateX(-6px); opacity: 0.7; }
-  94%           { transform: translateX(3px);  opacity: 0.5; }
-  96%           { transform: translateX(-3px); opacity: 0.7; }
-}
-@keyframes glitch2 {
-  0%, 88%, 100% { transform: translateX(3px); opacity: 0; }
-  90%           { transform: translateX(6px);  opacity: 0.7; }
-  93%           { transform: translateX(-3px); opacity: 0.5; }
-  95%           { transform: translateX(3px);  opacity: 0.7; }
-}
-
-/* ── Window animations ────────────────────────────────────────── */
-@keyframes windowOpen {
-  from { opacity: 0; transform: scale(0.92) translateY(8px); }
-  to   { opacity: 1; transform: scale(1) translateY(0); }
-}
+/* Live background + boot screen keyframes removed for flat & fast design */
 
 .window {
   position: absolute;
@@ -225,7 +132,6 @@
   width: var(--win-w, 800px);
   height: var(--win-h, 560px);
   transform: translate(var(--win-x, 0px), var(--win-y, 0px));
-  will-change: transform;
   box-sizing: border-box;
   transition:
     top 300ms cubic-bezier(0.2, 0.8, 0.2, 1),
@@ -261,8 +167,6 @@
 
 .dock-container {
   background: var(--dock-bg);
-  backdrop-filter: var(--dock-blur);
-  -webkit-backdrop-filter: var(--dock-blur);
   border-radius: var(--dock-radius);
   padding: var(--dock-padding);
   display: flex;
@@ -465,9 +369,7 @@
   justify-content: space-between;
   padding: 0 16px;
   border-bottom: 1px solid var(--color-border-subtle);
-  background: rgba(15, 23, 42, 0.65);
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  background: var(--color-bg-secondary);
   z-index: 10000;
 }
 
@@ -517,6 +419,5 @@
 
 /* ── Desktop ──────────────────────────────────────────────────── */
 .desktop--launchpad-open {
-  backdrop-filter: blur(20px) brightness(0.85);
-  transition: backdrop-filter var(--duration-normal) var(--ease-smooth);
+  background: var(--color-bg-secondary);
 }

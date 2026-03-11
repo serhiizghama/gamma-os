@@ -25,8 +25,8 @@ export function BrowserApp(): React.ReactElement {
         flex: 1,
         display: "flex",
         flexDirection: "column",
-        background: "radial-gradient(circle at top, #1b2845 0, #050712 45%, #020308 100%)",
-        color: "var(--text-primary)",
+        background: "var(--color-bg-base)",
+        color: "var(--color-text-primary)",
         fontFamily: "var(--font-system)",
       }}
     >
@@ -38,10 +38,8 @@ export function BrowserApp(): React.ReactElement {
           display: "flex",
           alignItems: "center",
           gap: 8,
-          borderBottom: "1px solid rgba(255,255,255,0.06)",
-          backdropFilter: "blur(14px)",
-          WebkitBackdropFilter: "blur(14px)",
-          background: "linear-gradient(to bottom, rgba(10,10,18,0.9), rgba(5,7,15,0.95))",
+          borderBottom: "1px solid var(--color-border-subtle)",
+          background: "var(--color-surface)",
         }}
       >
         <span
@@ -61,10 +59,10 @@ export function BrowserApp(): React.ReactElement {
           style={{
             flex: 1,
             borderRadius: 999,
-            border: "1px solid rgba(255,255,255,0.15)",
-            background: "rgba(5,10,20,0.9)",
+            border: "1px solid var(--color-border-subtle)",
+            background: "var(--color-bg-primary)",
             padding: "7px 14px",
-            color: "var(--text-primary)",
+            color: "var(--color-text-primary)",
             fontSize: 13,
             outline: "none",
           }}

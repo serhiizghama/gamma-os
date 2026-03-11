@@ -137,8 +137,7 @@
 }
 
 .desktop--launchpad-open {
-  backdrop-filter: blur(20px) brightness(0.7);
-  transition: backdrop-filter var(--duration-normal) var(--ease-smooth);
+  background: var(--color-bg-secondary);
 }
 ```
 
