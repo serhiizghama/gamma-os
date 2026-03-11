@@ -38,6 +38,7 @@ export function DynamicAppRenderer({
     const PascalId = pascal(appId);
     try {
       const mod = await import(
+        /* @vite-ignore */
         `../apps/generated/${appId}/${PascalId}App.tsx?t=${entry.updatedAt}`
       );
       const Exported = mod.default ?? mod[Object.keys(mod)[0]];
