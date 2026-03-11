@@ -394,6 +394,7 @@ export function WindowNode({ id }: WindowNodeProps): React.ReactElement | null {
             flexDirection: "column",
             minHeight: 0,
             position: "relative",
+            zIndex: 1,
           }}
         >
           {/* App content — full height; panel overlays from bottom when open */}

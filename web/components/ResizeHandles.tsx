@@ -53,7 +53,8 @@ export function ResizeHandles({ onResizePointerDown }: ResizeHandlesProps): Reac
             position: "absolute",
             ...HANDLE_STYLES[edge],
             cursor: CURSOR_MAP[edge],
-            zIndex: 10,
+            zIndex: 50,
+            pointerEvents: "auto",
             // Invisible — purely a hit target
             background: "transparent",
           }}
