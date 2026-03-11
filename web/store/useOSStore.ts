@@ -31,6 +31,27 @@ export const useOSStore = create<OSStore>()(
       focusedWindowId: null,
       launchpadOpen: false,
       architectOpen: false,
+      appRegistry: {},
+      setAppRegistry: (registry) =>
+        set((state) => {
+          state.appRegistry = registry;
+        }),
+      updateAppRegistryEntry: (appId, entry) =>
+        set((state) => {
+          if (state.appRegistry[appId]) {
+            Object.assign(state.appRegistry[appId], entry);
+          }
+        }),
+      removeAppRegistryEntry: (appId) =>
+        set((state) => {
+          delete state.appRegistry[appId];
+        }),
+      windowAgentPanelOpen: {},
+      toggleWindowAgentPanel: (windowId) =>
+        set((state) => {
+          state.windowAgentPanelOpen[windowId] =
+            !state.windowAgentPanelOpen[windowId];
+        }),
       notifications: [],
       toastQueue: [],
       uiSettings: { ...DEFAULT_UI_SETTINGS },
@@ -139,6 +160,7 @@ export const useOSStore = create<OSStore>()(
         zIndexCounter: state.zIndexCounter,
         focusedWindowId: state.focusedWindowId,
         uiSettings: state.uiSettings,
+        windowAgentPanelOpen: state.windowAgentPanelOpen,
       }),
     }
   )

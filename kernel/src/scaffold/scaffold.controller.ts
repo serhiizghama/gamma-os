@@ -1,5 +1,6 @@
 import {
   Controller,
+  Get,
   Post,
   Delete,
   Param,
@@ -11,12 +12,18 @@ import {
   ScaffoldRequest,
   ScaffoldResult,
 } from './scaffold.service';
+import type { AppRegistryEntry } from '@gamma/types';
 
 @Controller('api/scaffold')
 export class ScaffoldController {
   private readonly logger = new Logger(ScaffoldController.name);
 
   constructor(private readonly scaffoldService: ScaffoldService) {}
+
+  @Get('registry')
+  async getRegistry(): Promise<Record<string, AppRegistryEntry>> {
+    return this.scaffoldService.getRegistry();
+  }
 
   @Post()
   async scaffold(@Body() req: ScaffoldRequest): Promise<ScaffoldResult> {

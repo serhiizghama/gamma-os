@@ -10,6 +10,7 @@ import { ArchitectWindow } from "./ArchitectWindow";
 import { WindowManager } from "./WindowManager";
 import { NotificationCenter } from "./NotificationCenter";
 import { useSystemEvents } from "../hooks/useSystemEvents";
+import { useAppRegistry } from "../hooks/useAppRegistry";
 
 /**
  * Fresh-boot gate: spawn default windows ONLY when localStorage has no
@@ -74,6 +75,7 @@ export function GammaOS(): React.ReactElement {
 
   useFreshBootDefaults();
   useArchitectSession();
+  useAppRegistry(); // fetch registry + subscribe to component_ready/removed
   useSystemEvents(); // mock SSE → real EventSource in production
 
   return (

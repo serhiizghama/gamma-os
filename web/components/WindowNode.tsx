@@ -1,24 +1,85 @@
-import React, { useRef, useCallback, useEffect, lazy, Suspense } from "react";
+import React, {
+  useRef,
+  useCallback,
+  useEffect,
+  lazy,
+  Suspense,
+  useState,
+} from "react";
 import { useOSStore } from "../store/useOSStore";
 import { TitleBar } from "./TitleBar";
 import { ResizeHandles, ResizeEdge } from "./ResizeHandles";
+import { DynamicAppRenderer } from "./DynamicAppRenderer";
+import { AgentChat } from "./AgentChat";
+import { useAgentStream } from "../hooks/useAgentStream";
+import { API_BASE } from "../constants/api";
 
 // ── App registry — lazy-load per appId ──────────────────────────────────────
-const TerminalApp       = lazy(() => import("../apps/TerminalApp").then((m)       => ({ default: m.TerminalApp  })));
-const SettingsApp       = lazy(() => import("../apps/SettingsApp").then((m)       => ({ default: m.SettingsApp  })));
-const KernelMonitorApp  = lazy(() => import("../apps/KernelMonitorApp").then((m)  => ({ default: m.KernelMonitorApp })));
+const TerminalApp = lazy(() =>
+  import("../apps/TerminalApp").then((m) => ({ default: m.TerminalApp })),
+);
+const SettingsApp = lazy(() =>
+  import("../apps/SettingsApp").then((m) => ({ default: m.SettingsApp })),
+);
+const KernelMonitorApp = lazy(() =>
+  import("../apps/KernelMonitorApp").then((m) => ({
+    default: m.KernelMonitorApp,
+  })),
+);
 
-function AppContent({ appId }: { appId: string }): React.ReactElement {
+function EmbeddedAgentChat({
+  appId,
+  title,
+  onClose,
+}: {
+  appId: string;
+  title: string;
+  onClose: () => void;
+}): React.ReactElement {
+  const windowId = `app-owner-${appId}`;
+  const { messages, status, pendingToolLines, sendMessage } =
+    useAgentStream(windowId);
+  return (
+    <AgentChat
+      mode="live"
+      title={`${title} Assistant`}
+      variant="embedded"
+      placeholder={`Ask about ${title}…`}
+      messages={messages}
+      status={status}
+      pendingToolLines={pendingToolLines}
+      onSend={sendMessage}
+      onClose={onClose}
+    />
+  );
+}
+
+function AppContent({
+  appId,
+  registryEntry,
+}: {
+  appId: string;
+  registryEntry?: import("@gamma/types").AppRegistryEntry | null;
+}): React.ReactElement {
   const wrap = (node: React.ReactNode, label: string) => (
     <Suspense fallback={<AppPlaceholder label={`Loading ${label}…`} />}>
       {node}
     </Suspense>
   );
+  if (registryEntry) {
+    return (
+      <DynamicAppRenderer appId={appId} entry={registryEntry} />
+    );
+  }
   switch (appId) {
-    case "terminal":       return wrap(<TerminalApp />,       "Terminal");
-    case "settings":       return wrap(<SettingsApp />,       "Settings");
-    case "kernel-monitor": return wrap(<KernelMonitorApp />,  "Kernel Monitor");
-    default:               return <AppPlaceholder label={appId} />;
+    case "terminal":
+      return wrap(<TerminalApp />, "Terminal");
+    case "settings":
+      return wrap(<SettingsApp />, "Settings");
+    case "kernel-monitor":
+      return wrap(<KernelMonitorApp />, "Kernel Monitor");
+    default:
+      return <AppPlaceholder label={appId} />;
   }
 }
 
@@ -42,6 +103,9 @@ function AppPlaceholder({ label }: { label: string }): React.ReactElement {
 
 const MIN_W = 320;
 const MIN_H = 200;
+const AGENT_PANEL_MIN = 0.2;
+const AGENT_PANEL_MAX = 0.6;
+const AGENT_PANEL_DEFAULT = 0.4;
 
 interface WindowNodeProps {
   id: string;
@@ -51,6 +115,16 @@ export function WindowNode({ id }: WindowNodeProps): React.ReactElement | null {
   const win = useOSStore((s) => s.windows[id]);
   const isFocused = useOSStore((s) => s.focusedWindowId === id);
   const focusWindow = useOSStore((s) => s.focusWindow);
+  const appRegistry = useOSStore((s) => s.appRegistry);
+  const windowAgentPanelOpen = useOSStore((s) => s.windowAgentPanelOpen);
+  const toggleWindowAgentPanel = useOSStore((s) => s.toggleWindowAgentPanel);
+
+  const registryEntry = win ? appRegistry[win.appId] : null;
+  const hasAgent = registryEntry?.hasAgent ?? false;
+  const agentPanelOpen = windowAgentPanelOpen[id] ?? false;
+
+  const [agentPanelHeight, setAgentPanelHeight] = useState(AGENT_PANEL_DEFAULT);
+  const panelResizeRef = useRef({ startY: 0, startHeight: 0 });
 
   // Outer shell ref — only position/size CSS vars live here
   const shellRef = useRef<HTMLDivElement>(null);
@@ -195,6 +269,64 @@ export function WindowNode({ id }: WindowNodeProps): React.ReactElement | null {
     if (!isFocused) focusWindow(id);
   }, [id, isFocused, focusWindow]);
 
+  // ─── AI Assistant toggle: create session on first open, then toggle panel ──
+  const handleToggleAgent = useCallback(async () => {
+    if (!hasAgent || !win) return;
+    const windowId = `app-owner-${win.appId}`;
+    if (!agentPanelOpen) {
+      try {
+        const res = await fetch(`${API_BASE}/api/sessions`);
+        if (!res.ok) return;
+        const sessions: { windowId: string }[] = await res.json();
+        const exists = sessions.some((s) => s.windowId === windowId);
+        if (!exists) {
+          await fetch(`${API_BASE}/api/sessions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              windowId,
+              appId: win.appId,
+              sessionKey: windowId,
+              agentId: "app-owner",
+            }),
+          });
+        }
+      } catch {
+        /* Kernel may not be running */
+      }
+    }
+    toggleWindowAgentPanel(id);
+  }, [id, win, hasAgent, agentPanelOpen, toggleWindowAgentPanel]);
+
+  // ─── Agent panel top-edge resize (drag handle) ────────────────────────────
+  const onPanelResizeDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const el = e.currentTarget;
+      panelResizeRef.current = { startY: e.clientY, startHeight: agentPanelHeight };
+      el.setPointerCapture(e.pointerId);
+      const onMove = (ev: PointerEvent) => {
+        const frame = el.closest(".window__frame") as HTMLElement;
+        if (!frame) return;
+        const frameH = frame.offsetHeight;
+        const dy = ev.clientY - panelResizeRef.current.startY;
+        const deltaFrac = -dy / frameH;
+        let newHeight = panelResizeRef.current.startHeight + deltaFrac;
+        newHeight = Math.max(AGENT_PANEL_MIN, Math.min(AGENT_PANEL_MAX, newHeight));
+        setAgentPanelHeight(newHeight);
+      };
+      const onUp = () => {
+        el.releasePointerCapture(e.pointerId);
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp, { once: true });
+    },
+    [agentPanelHeight],
+  );
+
   if (!win) return null;
 
   return (
@@ -225,11 +357,67 @@ export function WindowNode({ id }: WindowNodeProps): React.ReactElement | null {
           windowId={id}
           title={win.title}
           onDragStart={handleDragStart}
+          hasAgent={hasAgent}
+          agentPanelOpen={agentPanelOpen}
+          onToggleAgent={handleToggleAgent}
         />
 
-        {/* App content — lazy-loaded per appId */}
-        <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-          <AppContent appId={win.appId} />
+        {/* App content + optional Agent chat panel */}
+        <div
+          style={{
+            flex: 1,
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+            minHeight: 0,
+          }}
+        >
+          {/* App content — shrinks when agent panel is open */}
+          <div
+            style={{
+              flex: agentPanelOpen ? `0 0 ${(1 - agentPanelHeight) * 100}%` : 1,
+              minHeight: 0,
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <AppContent appId={win.appId} registryEntry={registryEntry} />
+          </div>
+
+          {/* Embedded AgentChat — slides up when ✨ toggled, resizable 20–60% */}
+          {agentPanelOpen && hasAgent && (
+            <div
+              style={{
+                flex: `0 0 ${agentPanelHeight * 100}%`,
+                minHeight: 0,
+                display: "flex",
+                flexDirection: "column",
+                position: "relative",
+                borderTop: "1px solid var(--color-border-subtle)",
+              }}
+            >
+              {/* Resize handle (top edge of panel) */}
+              <div
+                onPointerDown={onPanelResizeDown}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  height: 8,
+                  cursor: "ns-resize",
+                  zIndex: 5,
+                  background: "transparent",
+                }}
+                aria-label="Resize chat panel"
+                role="separator"
+              />
+              <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+                <EmbeddedAgentChat appId={win.appId} title={win.title} onClose={() => toggleWindowAgentPanel(id)} />
+              </div>
+            </div>
+          )}
         </div>
 
         {/* 8-directional resize handles */}

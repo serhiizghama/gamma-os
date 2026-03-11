@@ -385,15 +385,34 @@ export class ScaffoldService {
       }),
     );
 
-    // Broadcast component_ready via SSE
+    // Broadcast component_ready via SSE (include updatedAt for frontend hot-reload)
     await this.redis.xadd(
       'gamma:sse:broadcast',
       '*',
-      ...flattenEntry({ type: 'component_ready', appId: safeId, modulePath }),
+      ...flattenEntry({
+        type: 'component_ready',
+        appId: safeId,
+        modulePath,
+        updatedAt: now,
+      }),
     );
 
     this.logger.log(`Scaffolded app '${safeId}' → ${modulePath}`);
     return { ok: true, filePath, commitHash, modulePath };
+  }
+
+  /** Return full app registry from Redis for frontend */
+  async getRegistry(): Promise<Record<string, import('@gamma/types').AppRegistryEntry>> {
+    const raw = await this.redis.hgetall('gamma:app:registry');
+    const registry: Record<string, import('@gamma/types').AppRegistryEntry> = {};
+    for (const [id, json] of Object.entries(raw)) {
+      try {
+        registry[id] = JSON.parse(json) as import('@gamma/types').AppRegistryEntry;
+      } catch {
+        /* skip malformed entries */
+      }
+    }
+    return registry;
   }
 
   // ── App Deletion (spec §9.6 v1.4) ─────────────────────────────────────

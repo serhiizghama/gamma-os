@@ -52,6 +52,16 @@ export interface OSStore {
   /** System Architect panel visibility */
   architectOpen: boolean;
 
+  /** Generated app registry (from API + component_ready/removed SSE) */
+  appRegistry: Record<string, import("@gamma/types").AppRegistryEntry>;
+  setAppRegistry: (registry: Record<string, import("@gamma/types").AppRegistryEntry>) => void;
+  updateAppRegistryEntry: (appId: string, entry: Partial<import("@gamma/types").AppRegistryEntry>) => void;
+  removeAppRegistryEntry: (appId: string) => void;
+
+  /** Per-window agent panel (✨) open state — keyed by window id */
+  windowAgentPanelOpen: Record<string, boolean>;
+  toggleWindowAgentPanel: (windowId: string) => void;
+
   openWindow: (appId: string, title: string) => void;
   closeWindow: (id: string) => void;
   minimizeWindow: (id: string) => void;
