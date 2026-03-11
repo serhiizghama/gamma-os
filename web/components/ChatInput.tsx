@@ -41,11 +41,13 @@ export function ChatInput({
         alignItems: "center",
         gap: 8,
         padding: "10px 14px",
-        borderTop: `1px solid ${accentColor}22`,
+        background: "var(--color-bg-primary)",
+        borderTop: "1px solid var(--color-border-subtle)",
       }}
     >
       <input
         type="text"
+        className="agent-chat-input"
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={handleKeyDown}
@@ -53,37 +55,37 @@ export function ChatInput({
         disabled={status === "running"}
         style={{
           flex: 1,
-          background: "#111",
-          border: `1px solid ${accentColor}33`,
+          background: "var(--color-bg-secondary)",
+          border: "1px solid var(--color-border-subtle)",
           borderRadius: 6,
           padding: "8px 12px",
-          color: "#e0e0e0",
-          fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', monospace",
+          color: "var(--color-text-primary)",
+          fontFamily: "var(--font-system)",
           fontSize: 13,
           outline: "none",
-          transition: "border-color 0.2s",
+          transition: "border-color 200ms ease-out",
         }}
         onFocus={(e) => {
-          e.currentTarget.style.borderColor = `${accentColor}88`;
+          e.currentTarget.style.borderColor = "var(--color-accent-primary)";
         }}
         onBlur={(e) => {
-          e.currentTarget.style.borderColor = `${accentColor}33`;
+          e.currentTarget.style.borderColor = "var(--color-border-subtle)";
         }}
       />
       <button
         onClick={handleSend}
         disabled={disabled}
         style={{
-          background: disabled ? "#333" : accentColor,
-          color: disabled ? "#666" : "#0a0a0a",
+          background: disabled ? "var(--color-bg-secondary)" : "var(--color-accent-primary)",
+          color: disabled ? "var(--color-text-secondary)" : "#ffffff",
           border: "none",
           borderRadius: 6,
           padding: "8px 16px",
-          fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', monospace",
+          fontFamily: "var(--font-system)",
           fontSize: 13,
           fontWeight: 600,
           cursor: disabled ? "not-allowed" : "pointer",
-          transition: "background 0.2s, color 0.2s",
+          transition: "background 200ms ease-out, color 200ms ease-out",
           opacity: disabled ? 0.5 : 1,
         }}
       >

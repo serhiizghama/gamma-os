@@ -7,8 +7,8 @@ interface ChatHeaderProps {
 }
 
 const STATUS_CONFIG: Record<AgentStatus, { label: string; color: string }> = {
-  idle: { label: "Idle", color: "#d1d5db" },
-  running: { label: "Thinking…", color: "#0066ff" },
+  idle: { label: "Idle", color: "var(--color-text-secondary)" },
+  running: { label: "Thinking…", color: "var(--color-accent-primary)" },
   error: { label: "Error", color: "#ff4d4f" },
   aborted: { label: "Aborted", color: "#f97316" },
 };
@@ -16,7 +16,6 @@ const STATUS_CONFIG: Record<AgentStatus, { label: string; color: string }> = {
 export function ChatHeader({
   title,
   status,
-  accentColor,
 }: ChatHeaderProps): React.ReactElement {
   const cfg = STATUS_CONFIG[status];
 
@@ -27,18 +26,20 @@ export function ChatHeader({
         alignItems: "center",
         justifyContent: "space-between",
         padding: "10px 14px",
-        borderBottom: `1px solid ${accentColor}22`,
-        fontFamily:
-          "-apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif",
+        background: "rgba(15, 23, 42, 0.65)",
+        backdropFilter: "blur(16px) saturate(180%)",
+        WebkitBackdropFilter: "blur(16px) saturate(180%)",
+        borderBottom: "1px solid var(--color-border-subtle)",
+        fontFamily: "var(--font-system)",
         fontSize: 13,
-        color: "#1e1e1e",
+        color: "var(--color-text-primary)",
         userSelect: "none",
       }}
     >
       <span
         style={{
           fontWeight: 600,
-          color: "#1e1e1e",
+          color: "var(--color-text-primary)",
           letterSpacing: 0.2,
         }}
       >
@@ -50,7 +51,7 @@ export function ChatHeader({
           alignItems: "center",
           gap: 6,
           fontSize: 11,
-            color: "#6b7280",
+          color: "var(--color-text-secondary)",
         }}
       >
         <span
@@ -59,7 +60,7 @@ export function ChatHeader({
             height: 7,
             borderRadius: "50%",
             background: cfg.color,
-            boxShadow: "0 0 0 1px rgba(148,163,184,0.35)",
+            boxShadow: "0 0 0 1px var(--color-border-subtle)",
             animation:
               status === "running" ? "pulse 1.4s ease-in-out infinite" : "none",
           }}

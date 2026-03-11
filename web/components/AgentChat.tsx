@@ -123,9 +123,9 @@ export function AgentChat(props: AgentChatProps): React.ReactElement {
         flexDirection: "column",
         height: isEmbedded ? "40%" : "100%",
         width: "100%",
-        background: "#ffffff",
+        background: "var(--color-bg-secondary)",
         borderRadius: isEmbedded ? "10px 10px 0 0" : 0,
-        border: isEmbedded ? `1px solid ${accentColor}22` : "none",
+        border: isEmbedded ? `1px solid var(--color-border-subtle)` : "none",
         position: isEmbedded ? "absolute" : "relative",
         bottom: isEmbedded ? 0 : undefined,
         left: isEmbedded ? 0 : undefined,
@@ -145,33 +145,36 @@ export function AgentChat(props: AgentChatProps): React.ReactElement {
         onSend={handleSend}
       />
 
-      {/* Pulse animation keyframes */}
+      {/* Twilight Blue markdown styles */}
       <style>{`
         @keyframes pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.4; }
         }
-        .agent-chat-markdown p { margin: 4px 0; color: #1e1e1e; }
+        .agent-chat-markdown p { margin: 4px 0; color: var(--color-text-primary); }
         .agent-chat-markdown code {
-          background: #f3f4f6;
+          background: var(--color-bg-primary);
+          color: var(--color-text-primary);
           padding: 1px 5px;
           border-radius: 3px;
           font-size: 12px;
+          border: 1px solid var(--color-border-subtle);
         }
         .agent-chat-markdown pre {
-          background: #f5f5f5;
+          background: var(--color-bg-primary);
           padding: 10px;
           border-radius: 6px;
           overflow-x: auto;
           font-size: 12px;
-          border: 1px solid #e5e5e5;
+          border: 1px solid var(--color-border-subtle);
         }
         .agent-chat-markdown pre code {
           background: none;
+          border: none;
           padding: 0;
         }
         .agent-chat-markdown a {
-          color: #0066ff;
+          color: var(--color-accent-primary);
           text-decoration: underline;
         }
         .agent-chat-markdown table {
@@ -181,12 +184,19 @@ export function AgentChat(props: AgentChatProps): React.ReactElement {
         }
         .agent-chat-markdown th,
         .agent-chat-markdown td {
-          border: 1px solid #e5e5e5;
+          border: 1px solid var(--color-border-subtle);
           padding: 4px 8px;
           text-align: left;
         }
         .agent-chat-markdown th {
-          background: #f3f4f6;
+          background: var(--color-bg-primary);
+          color: var(--color-text-primary);
+        }
+        .agent-chat-markdown td {
+          color: var(--color-text-primary);
+        }
+        .agent-chat-input::placeholder {
+          color: var(--color-text-secondary);
         }
       `}</style>
     </div>
