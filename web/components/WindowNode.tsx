@@ -218,10 +218,10 @@ export function WindowNode({ id }: WindowNodeProps): React.ReactElement | null {
           background: "var(--window-bg)",
           backdropFilter: "var(--glass-blur)",
           WebkitBackdropFilter: "var(--glass-blur)",
-          border: isFocused ? "1px solid #0066ff" : "var(--window-border)",
-          boxShadow: isFocused
-            ? "0 24px 60px rgba(15, 23, 42, 0.22)"
-            : "var(--glass-shadow)",
+          border: isFocused ? "1px solid var(--color-accent-primary)" : "var(--window-border)",
+            boxShadow: isFocused
+              ? "var(--shadow-elevated)"
+              : "var(--glass-shadow)",
           position: "relative", // so ResizeHandles can be absolute inside
         } as React.CSSProperties}
       >

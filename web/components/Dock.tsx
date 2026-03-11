@@ -28,8 +28,8 @@ export function Dock(): React.ReactElement {
         gap: 4,
         minHeight: 80,
         zIndex: 1000,
-        border: "1px solid rgba(255,255,255,0.38)",
-        boxShadow: "0 8px 40px rgba(80,60,120,0.18), inset 0 1px 0 rgba(255,255,255,0.5)",
+        border: "1px solid var(--color-border-subtle)",
+        boxShadow: "var(--shadow-elevated)",
       }}
     >
       {/* Launchpad toggle */}

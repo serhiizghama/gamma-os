@@ -81,16 +81,22 @@ export function GammaOS(): React.ReactElement {
       {booting && <BootScreen onDone={handleBootDone} />}
     <div
       id="gamma-os"
+      className="desktop-shell"
       style={{
         position: "fixed",
         inset: 0,
+        width: "100vw",
+        height: "100vh",
+        display: "flex",
+        flexDirection: "column",
         overflow: "hidden",
+        background: "linear-gradient(135deg, #0F172A 0%, #151F32 100%)",
         fontFamily: "var(--font-system)",
-        color: "var(--text-primary)",
+        color: "var(--color-text-primary)",
         userSelect: "none",
       }}
     >
-      {/* Layer -1: Menu Bar (fixed top) */}
+      {/* Layer -1: Taskbar (top-anchored, glassmorphism) */}
       <MenuBar
         onOpenArchitect={toggleArchitect}
         onOpenLaunchpad={toggleLaunchpad}
@@ -99,8 +105,8 @@ export function GammaOS(): React.ReactElement {
       {/* Layer 5: System Architect panel */}
       <ArchitectWindow />
 
-      {/* Layer 0: Desktop background (offset by menu bar) */}
-      <div style={{ paddingTop: MENU_HEIGHT }}>
+      {/* Layer 0: Desktop background (offset by taskbar) */}
+      <div style={{ flex: 1, minHeight: 0, position: "relative", paddingTop: MENU_HEIGHT }}>
         <Desktop />
       </div>
 

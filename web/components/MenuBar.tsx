@@ -13,13 +13,13 @@ interface MenuBarProps {
 // ── Status Config ────────────────────────────────────────────────────────
 
 const STATUS_DISPLAY: Record<HealthStatus, { label: string; color: string }> = {
-  ok: { label: "OK", color: "#0066ff" },
+  ok: { label: "OK", color: "#3B82F6" },
   degraded: { label: "Degraded", color: "#facc15" },
   error: { label: "Error", color: "#ff4d4f" },
-  offline: { label: "Offline", color: "#9ca3af" },
+  offline: { label: "Offline", color: "#94A3B8" },
 };
 
-const MENU_HEIGHT = 28;
+const MENU_HEIGHT = 48; /* var(--space-12) */
 
 // ── Component ────────────────────────────────────────────────────────────
 
@@ -65,35 +65,36 @@ export function MenuBar({
 
   return (
     <div
+      className="desktop-shell__taskbar"
       style={{
         position: "fixed",
         top: 0,
         left: 0,
         right: 0,
-        height: MENU_HEIGHT,
-        background: "rgba(255, 255, 255, 0.4)",
-        backdropFilter: "blur(10px)",
-        WebkitBackdropFilter: "blur(10px)",
-        borderBottom: "1px solid #e5e5e5",
+        height: "var(--space-12)",
+        minHeight: "var(--space-12)",
+        background: "rgba(15, 23, 42, 0.65)",
+        backdropFilter: "blur(16px) saturate(180%)",
+        WebkitBackdropFilter: "blur(16px) saturate(180%)",
+        borderBottom: "1px solid var(--color-border-subtle)",
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        padding: "0 16px",
+        padding: `0 var(--space-4)`,
         zIndex: 10000,
-        fontFamily:
-          "-apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif",
+        fontFamily: "var(--font-system)",
         fontSize: 11,
         letterSpacing: 0.08,
-        color: "#1e1e1e",
+        color: "var(--color-text-primary)",
         userSelect: "none",
       }}
     >
       {/* Left: Brand + System Status */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-4)" }}>
         <span
           style={{
             fontSize: 13,
-            fontWeight: 600,
+            fontWeight: "var(--font-weight-semibold)",
             letterSpacing: 2,
           }}
         >
@@ -104,9 +105,9 @@ export function MenuBar({
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 6,
+            gap: "var(--space-2)",
             fontSize: 11,
-            color: "#4b5563",
+            color: "var(--color-text-secondary)",
             cursor: "default",
           }}
         >
@@ -118,63 +119,29 @@ export function MenuBar({
               backgroundColor: st.color,
               boxShadow:
                 health === "ok"
-                  ? "0 0 0 1px rgba(0,102,255,0.2)"
-                  : "0 0 0 1px rgba(148,163,184,0.35)",
+                  ? "0 0 0 1px rgba(59, 130, 246, 0.35)"
+                  : "0 0 0 1px rgba(148, 163, 184, 0.35)",
             }}
           />
           <span>{st.label}</span>
         </span>
       </div>
 
-      {/* Right: Apps + Architect */}
-      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+      {/* Right: Global application menu */}
+      <div className="desktop-shell__menu" style={{ display: "flex", alignItems: "center", gap: "var(--space-4)" }}>
         <button
+          className="desktop-shell__menu-item"
           onClick={onOpenLaunchpad}
           title="Apps"
-          style={{
-            background: "transparent",
-            border: "none",
-            color: "#4b5563",
-            fontSize: 14,
-            cursor: "pointer",
-            padding: "3px 10px",
-            borderRadius: 6,
-            transition: "background 0.15s, color 0.15s",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = "rgba(0, 102, 255, 0.08)";
-            e.currentTarget.style.color = "#0066ff";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "transparent";
-            e.currentTarget.style.color = "#4b5563";
-          }}
         >
-          ☰
+          Apps
         </button>
         <button
+          className="desktop-shell__menu-item"
           onClick={onOpenArchitect}
           title="System Architect"
-          style={{
-            background: "transparent",
-            border: "none",
-            color: "#4b5563",
-            fontSize: 14,
-            cursor: "pointer",
-            padding: "3px 10px",
-            borderRadius: 6,
-            transition: "background 0.15s, color 0.15s",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = "rgba(0, 102, 255, 0.08)";
-            e.currentTarget.style.color = "#0066ff";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "transparent";
-            e.currentTarget.style.color = "#4b5563";
-          }}
         >
-          💬
+          Architect
         </button>
       </div>
     </div>

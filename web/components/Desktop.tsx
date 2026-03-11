@@ -66,14 +66,14 @@ export function Desktop(): React.ReactElement {
                 key={`${ai}-${i}`}
                 x1={pt[0]} y1={pt[1]}
                 x2={arm[i + 1][0]} y2={arm[i + 1][1]}
-                stroke="rgba(0,180,255,0.30)"
+                stroke="rgba(59, 130, 246, 0.4)"
                 strokeWidth="1.2"
               />
             ))
           )}
           {/* Extra connecting lines for network feel */}
-          <line x1="24" y1="22" x2="56" y2="22" stroke="rgba(0,180,255,0.12)" strokeWidth="0.8" />
-          <line x1="34" y1="36" x2="46" y2="36" stroke="rgba(0,180,255,0.12)" strokeWidth="0.8" />
+          <line x1="24" y1="22" x2="56" y2="22" stroke="rgba(59, 130, 246, 0.2)" strokeWidth="0.8" />
+          <line x1="34" y1="36" x2="46" y2="36" stroke="rgba(59, 130, 246, 0.2)" strokeWidth="0.8" />
 
           {/* Nodes */}
           {[
@@ -90,7 +90,7 @@ export function Desktop(): React.ReactElement {
             <circle
               key={i}
               cx={cx} cy={cy} r={r}
-              fill={i === 6 ? "rgba(0,210,255,0.70)" : "rgba(0,190,255,0.45)"}
+              fill={i === 6 ? "rgba(59, 130, 246, 0.65)" : "rgba(96, 165, 250, 0.4)"}
             />
           ))}
         </svg>
@@ -103,8 +103,8 @@ export function Desktop(): React.ReactElement {
             textTransform: "uppercase",
             fontFamily: "'SF Pro Display', -apple-system, sans-serif",
             color: "transparent",
-            WebkitTextStroke: "1px rgba(0, 160, 255, 0.18)",
-            textShadow: "0 0 80px rgba(0, 120, 255, 0.12)",
+            WebkitTextStroke: "1px rgba(59, 130, 246, 0.25)",
+            textShadow: "0 0 80px rgba(59, 130, 246, 0.15)",
             userSelect: "none",
             opacity: 0.7,
           }}

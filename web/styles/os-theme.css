@@ -1,25 +1,52 @@
 :root {
-  /* ── Accent & brand ───────────────────────────────────────── */
-  --accent-primary: #0066ff;
-  --accent-primary-soft: #4d94ff;
+  /* ── Twilight Blue foundational palette ───────────────────── */
+  --color-bg-primary: #0F172A;
+  --color-bg-secondary: #1E293B;
+  --color-accent-primary: #3B82F6;
+  --color-text-primary: #F8FAFC;
+  --color-text-secondary: #94A3B8;
+  --color-border-subtle: rgba(255, 255, 255, 0.1);
+  --shadow-elevated: 0 8px 32px rgba(0, 0, 0, 0.4);
 
-  /* ── Glass morphism (light) ───────────────────────────────── */
-  --glass-bg: rgba(255, 255, 255, 0.92);
-  --glass-border: rgba(229, 229, 229, 1);
-  --glass-blur: blur(20px) saturate(170%);
-  --glass-shadow: 0 18px 50px rgba(15, 23, 42, 0.12);
+  /* ── 4pt spatial grid (1 unit = 4px) ──────────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+
+  /* ── Typography weights ───────────────────────────────────── */
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* ── Accent & brand ───────────────────────────────────────── */
+  --accent-primary: #3B82F6;
+  --accent-primary-soft: #60a5fa;
+
+  /* ── Glass morphism (Twilight Blue) ───────────────────────── */
+  --glass-bg: rgba(15, 23, 42, 0.65);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-blur: blur(16px) saturate(180%);
+  --glass-shadow: var(--shadow-elevated);
 
   /* ── macOS window chrome ──────────────────────────────────── */
-  --window-bg: #ffffff;
+  --window-bg: #1E293B;
   --window-titlebar-height: 28px;
   --window-radius: 12px;
-  --window-border: 1px solid #e5e5e5;
+  --window-border: 1px solid var(--color-border-subtle);
   --window-min-width: 320px;
   --window-min-height: 200px;
 
   /* ── Dock ─────────────────────────────────────────────────── */
-  --dock-bg: rgba(255, 255, 255, 0.75);
-  --dock-blur: blur(24px) saturate(180%);
+  --dock-bg: rgba(15, 23, 42, 0.65);
+  --dock-blur: blur(16px) saturate(180%);
   --dock-radius: 20px;
   --dock-icon-size: 56px;
   --dock-padding: 8px 14px;
@@ -27,13 +54,13 @@
   /* ── Typography ───────────────────────────────────────────── */
   --font-system: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui,
     sans-serif;
-  --text-primary: #1e1e1e;
-  --text-secondary: #4b5563;
+  --text-primary: #F8FAFC;
+  --text-secondary: #94A3B8;
 
   /* ── Notifications ────────────────────────────────────────── */
-  --notif-bg: rgba(255, 255, 255, 0.96);
+  --notif-bg: rgba(15, 23, 42, 0.92);
   --notif-radius: 14px;
-  --notif-shadow: 0 10px 40px rgba(15, 23, 42, 0.18);
+  --notif-shadow: var(--shadow-elevated);
 
   /* ── Traffic lights ───────────────────────────────────────── */
   --btn-close: #ff5f57;
@@ -47,12 +74,12 @@
   --duration-normal: 280ms;
   --duration-slow: 420ms;
 
-  /* ── Nebula blob colors (analog blues) ────────────────────── */
-  --blob-1: #c7ddff; /* soft blue      */
-  --blob-2: #e0d7ff; /* lavender       */
-  --blob-3: #bfe3ff; /* pale cyan      */
-  --blob-4: #d6d9ff; /* periwinkle     */
-  --blob-5: #a9c8ff; /* mid blue       */
+  /* ── Nebula blob colors (Twilight Blue tones) ──────────────── */
+  --blob-1: #3b82f6; /* accent blue    */
+  --blob-2: #60a5fa; /* soft blue      */
+  --blob-3: #38bdf8; /* cyan accent    */
+  --blob-4: #6366f1; /* indigo         */
+  --blob-5: #2563eb; /* deep blue      */
 }
 
 /* ── Blob keyframes ───────────────────────────────────────────── */
@@ -94,19 +121,12 @@
 }
 
 
-/* ── Live Background ─────────────────────────────────────────── */
+/* ── Live Background (Twilight Blue atmospheric) ─────────────── */
 .live-bg {
   position: absolute;
   inset: 0;
-  /* Oversized gradient animates position for a "breathing" base */
-  background: linear-gradient(
-    140deg,
-    #f5f7fb 0%,
-    #eef3ff 30%,
-    #e3edff 55%,
-    #f7fbff 80%,
-    #ffffff 100%
-  );
+  /* Atmospheric gradient — Twilight Blue base */
+  background: linear-gradient(135deg, #0F172A 0%, #151F32 100%);
   background-size: 300% 300%;
   animation: bgBreath 28s ease-in-out infinite;
   overflow: hidden;
@@ -223,8 +243,8 @@
   padding: 0 12px; gap: 8px;
   flex-shrink: 0; cursor: grab;
   user-select: none;
-  background: #f5f5f5;
-  border-bottom: 1px solid #e5e5e5;
+  background: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--color-border-subtle);
 }
 .window-titlebar__lights { display: flex; gap: 6px; flex-shrink: 0; }
 
@@ -269,8 +289,8 @@
 .btn-maximize:hover { filter: brightness(0.88); }
 
 .window-titlebar__title {
-  flex: 1; text-align: center; font-size: 13px; font-weight: 500;
-  color: var(--text-secondary);
+  flex: 1; text-align: center; font-size: 13px; font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   pointer-events: none; font-family: var(--font-system);
 }
@@ -343,8 +363,60 @@
   animation: toastSlideOut var(--duration-fast) var(--ease-smooth) forwards;
 }
 
+/* ── Desktop Shell ─────────────────────────────────────────────── */
+.desktop-shell {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: linear-gradient(135deg, #0F172A 0%, #151F32 100%);
+  font-family: var(--font-system);
+  color: var(--color-text-primary);
+  user-select: none;
+}
+
+.desktop-shell__taskbar {
+  height: var(--space-12);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  z-index: 10000;
+}
+
+.desktop-shell__menu {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.desktop-shell__menu-item {
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-medium);
+  font-size: 13px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: 6px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-smooth),
+    text-shadow var(--duration-fast) var(--ease-smooth);
+}
+
+.desktop-shell__menu-item:hover {
+  color: var(--color-accent-primary);
+  text-shadow: 0 0 8px rgba(59, 130, 246, 0.5);
+}
+
 /* ── Desktop ──────────────────────────────────────────────────── */
 .desktop--launchpad-open {
-  backdrop-filter: blur(20px) brightness(1.05);
+  backdrop-filter: blur(20px) brightness(0.85);
   transition: backdrop-filter var(--duration-normal) var(--ease-smooth);
 }
