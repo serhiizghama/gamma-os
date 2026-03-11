@@ -16,12 +16,16 @@
   --color-accent: var(--color-accent-primary);
   --color-text-muted-strong: rgba(248, 250, 252, 0.6);
   --color-text-faint: rgba(248, 250, 252, 0.25);
+  --color-text-inverse: #FFFFFF;
+  --color-accent-error: #ff4d4f;
 
   /* ── Core window & panel aesthetics ────────────────────────── */
   --shadow-window: 0 24px 64px rgba(0, 0, 0, 0.5);
   --shadow-window-subtle: 0 8px 24px rgba(0, 0, 0, 0.3);
   --shadow-panel-overlay: 0 -4px 24px rgba(0, 0, 0, 0.25);
   --shadow-panel-side: -4px 0 24px rgba(0, 0, 0, 0.3);
+  --shadow-panel-subtle: 0 2px 4px rgba(0, 0, 0, 0.1);
+  --shadow-bubble-assistant: 0 2px 8px rgba(0, 0, 0, 0.15);
   --shadow-button-primary: 0 8px 18px rgba(59, 130, 246, 0.35);
   --shadow-accent-glow: 0 0 8px rgba(59, 130, 246, 0.5);
 
@@ -490,4 +494,10 @@
 /* ── Desktop ──────────────────────────────────────────────────── */
 .desktop--launchpad-open {
   background: var(--color-bg-secondary);
+}
+
+/* ── Agent Chat ────────────────────────────────────────────────── */
+.agent-chat-message-list {
+  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160"><text x="50%25" y="50%25" font-family="Inter, sans-serif" font-weight="800" font-size="16" fill="rgba(255, 255, 255, 0.03)" transform="rotate(-45 80 80)" text-anchor="middle" letter-spacing="2">GAMMA OS</text></svg>');
+  background-repeat: repeat;
 }
