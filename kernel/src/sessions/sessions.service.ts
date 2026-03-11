@@ -18,6 +18,7 @@ import { ScaffoldService } from '../scaffold/scaffold.service';
 
 const SESSIONS_KEY = 'gamma:sessions';
 const APP_OWNER_PREFIX = 'app-owner-';
+const APP_OWNER_INIT_FIELD = 'appOwnerInitialized';
 
 /** Convert kebab-case / snake_case id to PascalCase (matches scaffold.service) */
 function pascal(id: string): string {
@@ -63,6 +64,18 @@ export class SessionsService {
 
     // Keep Gateway's in-memory mapping in sync so events can be routed
     this.gatewayWs.registerWindowSession(dto.sessionKey, dto.windowId);
+
+    // Initialize App Owner sessions with a dedicated system prompt + source context.
+    if (dto.sessionKey?.startsWith(APP_OWNER_PREFIX)) {
+      this.initializeAppOwnerSession(dto.sessionKey, dto.windowId, dto.appId).catch(
+        (err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.logger.error(
+            `Failed to initialize App Owner session ${dto.sessionKey}: ${msg}`,
+          );
+        },
+      );
+    }
 
     return session;
   }
@@ -187,16 +200,10 @@ export class SessionsService {
       }),
     );
 
-    // 3. Enrich message for app-owner sessions (Loop 9 — Context Injection)
-    const messageToSend = await this.enrichMessageForAppOwner(
-      session.sessionKey,
-      message,
-    );
-
-    // 4. Forward to OpenClaw Gateway (fire-and-forget dispatch)
+    // 3. Forward to OpenClaw Gateway (fire-and-forget dispatch)
     const { accepted } = this.gatewayWs.sendMessage(
       session.sessionKey,
-      messageToSend,
+      message,
       windowId,
     );
     if (!accepted) {
@@ -219,40 +226,94 @@ export class SessionsService {
   }
 
   /**
-   * Enrich user message with app context for app-owner sessions (Loop 9).
-   * Reads context.md, agent-prompt.md, and main .tsx source via jailPath.
-   * Gracefully skips missing files; returns original message if not app-owner.
+   * Initialize an App Owner Gateway session with a dedicated system prompt that
+   * injects the app's source code and context. This runs once per session
+   * lifecycle (guarded by a Redis flag on gamma:state:{windowId}).
    */
-  private async enrichMessageForAppOwner(
+  private async initializeAppOwnerSession(
     sessionKey: string,
-    message: string,
-  ): Promise<string> {
-    // Guard: sessionKey must be non-null string
+    windowId: string,
+    appIdFromDto?: string | null,
+  ): Promise<void> {
     if (!sessionKey || typeof sessionKey !== 'string') {
-      this.logger.warn('enrichMessageForAppOwner: sessionKey is empty or invalid');
-      return message;
+      this.logger.warn(
+        'initializeAppOwnerSession: sessionKey is empty or invalid',
+      );
+      return;
     }
 
     if (!sessionKey.startsWith(APP_OWNER_PREFIX)) {
-      return message;
+      return;
     }
 
-    const rawAppId = sessionKey.slice(APP_OWNER_PREFIX.length);
+    // Guard: only run once per window/session lifecycle
+    const stateKey = `gamma:state:${windowId}`;
+    const alreadyInit = await this.redis.hget(stateKey, APP_OWNER_INIT_FIELD);
+    if (alreadyInit === '1') {
+      return;
+    }
+
+    const rawAppId =
+      appIdFromDto && typeof appIdFromDto === 'string'
+        ? appIdFromDto
+        : sessionKey.slice(APP_OWNER_PREFIX.length);
     const appId = rawAppId.replace(/[^a-z0-9-]/gi, '');
 
-    // Strict validation: reject empty, null-like, or literal "undefined"
-    // (occurs when frontend passes win.appId when it is undefined)
     if (
       !appId ||
       appId === 'undefined' ||
       rawAppId.toLowerCase() === 'undefined'
     ) {
       this.logger.warn(
-        `app-owner session with invalid appId: ${JSON.stringify(rawAppId)} — skipping context injection`,
+        `initializeAppOwnerSession: invalid appId for sessionKey=${sessionKey}: ${JSON.stringify(
+          rawAppId,
+        )}`,
       );
-      return message;
+      return;
     }
 
+    const contextBlock = await this.buildAppOwnerContextBlock(appId);
+    if (!contextBlock) {
+      this.logger.warn(
+        `initializeAppOwnerSession: no context available for appId=${appId}`,
+      );
+      // Still mark as initialized to avoid hammering filesystem on every create
+      await this.redis.hset(stateKey, APP_OWNER_INIT_FIELD, '1');
+      return;
+    }
+
+    const systemPromptLines = [
+      `You are the Dedicated Local Agent for the '${appId}' application.`,
+      'Here is your current source code and context:',
+      '',
+      contextBlock,
+      '',
+      'Your goal is to help the user modify and understand this specific application.',
+    ];
+
+    const systemPrompt = systemPromptLines.join('\n');
+
+    const { accepted } = this.gatewayWs.sendMessage(
+      sessionKey,
+      systemPrompt,
+      windowId,
+    );
+    if (!accepted) {
+      this.logger.warn(
+        `initializeAppOwnerSession: Gateway not connected, system prompt not sent for appId=${appId}`,
+      );
+      // Do not mark as initialized so we can try again on a future attempt
+      return;
+    }
+
+    await this.redis.hset(stateKey, APP_OWNER_INIT_FIELD, '1');
+  }
+
+  /**
+   * Build the shared App Owner context block combining persona, context.md and
+   * main .tsx source, searching both generated and system app directories.
+   */
+  private async buildAppOwnerContextBlock(appId: string): Promise<string | null> {
     const parts: string[] = [];
     const pascalName = pascal(appId);
     const tsxFileName = `${pascalName}App.tsx`;
@@ -357,20 +418,16 @@ export class SessionsService {
       }
 
       if (parts.length === 0) {
-        this.logger.warn(
-          `App Owner ${appId}: no context files found, sending raw message`,
-        );
-        return message;
+        return null;
       }
 
-      parts.push('--- USER REQUEST ---', message);
       return parts.join('\n');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error(
-        `App Owner context injection failed for ${appId}: ${msg}`,
+        `buildAppOwnerContextBlock failed for ${appId}: ${msg}`,
       );
-      return message;
+      return null;
     }
   }
 

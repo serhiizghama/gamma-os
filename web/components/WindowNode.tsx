@@ -354,7 +354,9 @@ export function WindowNode({ id }: WindowNodeProps): React.ReactElement | null {
     // Outer shell: position only — NO animation (animation overrides transform)
     <div
       ref={shellRef}
-      className={`window${win.isMinimized ? " window--minimized" : ""}${isFocused ? " window--focused" : ""}`}
+      className={`window${win.isMinimized ? " window--minimized" : ""}${
+        win.isMaximized ? " window--maximized" : ""
+      }${isFocused ? " window--focused" : ""}`}
       onPointerDown={handleShellPointerDown}
       style={{
         "--win-x": `${win.coordinates.x}px`,
