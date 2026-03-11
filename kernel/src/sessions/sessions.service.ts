@@ -19,6 +19,18 @@ import { ScaffoldService } from '../scaffold/scaffold.service';
 const APP_OWNER_PREFIX = 'app-owner-';
 const APP_OWNER_INIT_FIELD = 'appOwnerInitialized';
 
+/**
+ * Parse appId from an app-owner session key.
+ * "app-owner-notes" → "notes", "app-owner-" → null.
+ * Any segment after a colon (e.g. "app-owner-notes:v2") is stripped.
+ */
+function parseAppIdFromKey(sessionKey: string): string | null {
+  if (!sessionKey || !sessionKey.startsWith(APP_OWNER_PREFIX)) return null;
+  const raw = sessionKey.slice(APP_OWNER_PREFIX.length).split(':')[0].trim();
+  const appId = raw.replace(/[^a-z0-9-]/gi, '');
+  return appId || null;
+}
+
 /** Convert kebab-case / snake_case id to PascalCase (matches scaffold.service) */
 function pascal(id: string): string {
   return id
@@ -60,9 +72,14 @@ export class SessionsService {
 
   /** Create a new window↔session mapping */
   async create(dto: CreateSessionDto): Promise<WindowSession> {
+    // Robust appId resolution: DTO field is canonical, but fall back to parsing
+    // from sessionKey so "app-owner-notes" always yields appId="notes" even if
+    // the client omits or sends an empty appId.
+    const appId = dto.appId || parseAppIdFromKey(dto.sessionKey) || '';
+
     const session: WindowSession = {
       windowId: dto.windowId,
-      appId: dto.appId,
+      appId,
       sessionKey: dto.sessionKey,
       agentId: dto.agentId,
       createdAt: Date.now(),
@@ -75,7 +92,7 @@ export class SessionsService {
     await this.registry.upsert({
       sessionKey: dto.sessionKey,
       windowId: dto.windowId,
-      appId: dto.appId,
+      appId,
       status: 'idle',
       createdAt: session.createdAt,
       lastActiveAt: session.createdAt,
@@ -95,7 +112,7 @@ export class SessionsService {
 
     // Initialize App Owner sessions with a dedicated system prompt + source context.
     if (dto.sessionKey?.startsWith(APP_OWNER_PREFIX)) {
-      this.initializeAppOwnerSession(dto.sessionKey, dto.windowId, dto.appId).catch(
+      this.initializeAppOwnerSession(dto.sessionKey, dto.windowId, appId).catch(
         (err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
           this.logger.error(

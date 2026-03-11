@@ -67,8 +67,8 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
   // Request/response tracking
   private pendingRequests = new Map<string, PendingRequest>();
 
-  /** Inflight chat.send: frameId → { windowId } for error routing to SSE */
-  private inflightChatSend = new Map<string, { windowId: string }>();
+  /** Inflight chat.send: frameId → { windowId, sessionKey } for error routing and usage accumulation */
+  private inflightChatSend = new Map<string, { windowId: string; sessionKey: string }>();
 
   // Session → Window mapping (populated externally by SessionsService)
   public sessionToWindow = new Map<string, string>();
@@ -272,12 +272,15 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
   private handleFrame(frame: GWFrame): void {
     // Response to request
     if (frame.type === 'res' && frame.id) {
-      // chat.send is fire-and-forget — route errors to SSE
+      // chat.send is fire-and-forget — route errors to SSE; probe ok acks for usage
       const chatInflight = this.inflightChatSend.get(frame.id);
       if (chatInflight) {
         this.inflightChatSend.delete(frame.id);
         if (!frame.ok) {
           this.pushChatSendError(chatInflight.windowId, frame);
+        } else if (frame.payload) {
+          // Secondary path: some gateway versions attach usage to the chat.send ack
+          this.applyUsageFromPayload(chatInflight.sessionKey, frame.payload, 'chat.send res').catch(() => {});
         }
         return;
       }
@@ -406,42 +409,11 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
       }
 
       if (phase === 'end') {
-        // Debug: surface the raw payload to diagnose telemetry field paths
-        this.logger.debug(`[Telemetry] Lifecycle end payload: ${JSON.stringify(data ?? {})}`);
-
-        // Extract tokenUsage — try data directly, then common nested paths
-        const usageSource: Record<string, unknown> | null =
-          data?.inputTokens != null ? (data as Record<string, unknown>)
-          : (data as Record<string, unknown> | undefined)?.['usage'] != null
-            ? (data as Record<string, unknown>)['usage'] as Record<string, unknown>
-          : (data as Record<string, unknown> | undefined)?.['metrics'] != null
-            ? (data as Record<string, unknown>)['metrics'] as Record<string, unknown>
-          : (data as Record<string, unknown> | undefined)?.['tokenUsage'] != null
-            ? (data as Record<string, unknown>)['tokenUsage'] as Record<string, unknown>
-          : null;
-
-        const tokenUsage: TokenUsage | undefined = usageSource != null
-          ? {
-              inputTokens:      Number(usageSource['inputTokens']      ?? 0),
-              outputTokens:     Number(usageSource['outputTokens']     ?? 0),
-              cacheReadTokens:  Number(usageSource['cacheReadTokens']  ?? 0),
-              cacheWriteTokens: Number(usageSource['cacheWriteTokens'] ?? 0),
-              contextUsedPct:   Number(usageSource['contextUsedPct']   ?? 0),
-            }
-          : undefined;
-
-        if (tokenUsage) {
-          this.logger.debug(`[Telemetry] Parsed tokenUsage: in=${tokenUsage.inputTokens} out=${tokenUsage.outputTokens}`);
-        } else {
-          this.logger.warn('[Telemetry] lifecycle_end: no tokenUsage found in payload');
-        }
-
         const eventId = await this.pushSSE(sseKey, {
           type: 'lifecycle_end',
           windowId,
           runId,
           stopReason: 'stop',
-          ...(tokenUsage ? { tokenUsage } : {}),
         });
 
         // Clear live state but keep lastEventId for gap protection
@@ -457,14 +429,18 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
         );
         await this.redis.expire(`${REDIS_KEYS.STATE_PREFIX}${windowId}`, 14400); // 4h TTL
 
-        // Update session registry — accumulate tokens then flip status to idle
-        if (tokenUsage) {
-          await this.sessionRegistry.accumulateTokens(sessionKey, tokenUsage);
-        }
+        // Flip status to idle immediately — tokens will arrive via the RPC below
         await this.sessionRegistry.upsert({
           sessionKey,
           status: 'idle',
           lastActiveAt: nowMs,
+        });
+
+        // Request authoritative token metrics via the official session-usage RPC.
+        // Fire-and-forget: errors are logged but must not block SSE delivery.
+        this.requestSessionUsage(sessionKey).catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.logger.warn(`[Telemetry] session-usage request error for ${sessionKey}: ${msg}`);
         });
 
         // Cleanup run tracking + watchdog timers
@@ -950,7 +926,7 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
       return { accepted: false };
     }
     const frameId = ulid();
-    this.inflightChatSend.set(frameId, { windowId });
+    this.inflightChatSend.set(frameId, { windowId, sessionKey });
     this.logger.log(`sendMessage: ${sessionKey} → ${message.slice(0, 60)}... (frame=${frameId})`);
     this.send({
       type: 'req',
@@ -966,6 +942,76 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
       }
     }, 10_000);
     return { accepted: true };
+  }
+
+  // ── Telemetry: authoritative token usage via session-usage RPC ────────
+
+  /**
+   * Request cumulative token usage from the Gateway using the official
+   * session-usage RPC method. Called fire-and-forget after lifecycle_end.
+   * On success, calls accumulateTokens() so the monitor reflects real data.
+   */
+  private async requestSessionUsage(sessionKey: string): Promise<void> {
+    if (!this.connected) return;
+
+    const frameId = ulid();
+    this.send({
+      type: 'req',
+      id: frameId,
+      method: 'session-usage',
+      params: { sessionKey },
+    });
+
+    try {
+      const res = await this.waitForResponse(frameId, 3000);
+      if (!res.ok) {
+        this.logger.warn(
+          `[Telemetry] session-usage returned not-ok for ${sessionKey}: ${JSON.stringify(res.error ?? {})}`,
+        );
+        return;
+      }
+      await this.applyUsageFromPayload(sessionKey, res.payload ?? {}, 'session-usage RPC');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`[Telemetry] session-usage timed out for ${sessionKey}: ${msg}`);
+    }
+  }
+
+  /**
+   * Probe a response payload for token usage fields and accumulate them.
+   * Handles both flat layouts ({ inputTokens }) and nested ones ({ usage: { inputTokens } }).
+   * Logs the exact field path when usage is successfully found.
+   */
+  private async applyUsageFromPayload(
+    sessionKey: string,
+    payload: Record<string, unknown>,
+    source: string,
+  ): Promise<void> {
+    // Probe flat layout first, then common nested keys
+    const candidate =
+      payload['inputTokens'] != null ? payload
+      : payload['usage'] != null ? payload['usage'] as Record<string, unknown>
+      : payload['metrics'] != null ? payload['metrics'] as Record<string, unknown>
+      : payload['tokenUsage'] != null ? payload['tokenUsage'] as Record<string, unknown>
+      : null;
+
+    if (!candidate || candidate['inputTokens'] == null) {
+      this.logger.debug(`[Telemetry] No usage fields in ${source} payload for ${sessionKey}`);
+      return;
+    }
+
+    const tokenUsage: TokenUsage = {
+      inputTokens:      Number(candidate['inputTokens']      ?? 0),
+      outputTokens:     Number(candidate['outputTokens']     ?? 0),
+      cacheReadTokens:  Number(candidate['cacheReadTokens']  ?? 0),
+      cacheWriteTokens: Number(candidate['cacheWriteTokens'] ?? 0),
+      contextUsedPct:   Number(candidate['contextUsedPct']   ?? 0),
+    };
+
+    this.logger.debug(
+      `[Telemetry] ✓ usage from ${source}: in=${tokenUsage.inputTokens} out=${tokenUsage.outputTokens} (session=${sessionKey})`,
+    );
+    await this.sessionRegistry.accumulateTokens(sessionKey, tokenUsage);
   }
 
   // ── v1.6: Explicit session kill — free Gateway resources ────────────
