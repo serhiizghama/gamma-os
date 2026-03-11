@@ -1,6 +1,6 @@
 import React from "react";
 import { useOSStore } from "../../../store/useOSStore";
-import type { UISettings } from "../../../types/os";
+import type { UISettings } from "@gamma/types";
 
 const SECTION: React.CSSProperties = {
   display: "flex",

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useOSStore } from "../store/useOSStore";
 import { INSTALLED_APPS } from "../constants/apps";
-import type { Notification } from "../types/os";
+import type { Notification } from "@gamma/types";
 
 interface ToastNotificationProps {
   notification: Notification;

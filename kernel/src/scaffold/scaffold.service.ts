@@ -11,6 +11,8 @@ import * as fs from 'fs/promises';
 import simpleGit, { SimpleGit } from 'simple-git';
 import { REDIS_CLIENT } from '../redis/redis.constants';
 import { SessionsService } from '../sessions/sessions.service';
+import type { ScaffoldRequest, ScaffoldResult } from '@gamma/types';
+import { REDIS_KEYS } from '@gamma/types';
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -78,32 +80,10 @@ const SECURITY_DENY_PATTERNS: DenyPattern[] = [
   },
 ];
 
-// ── Interfaces ───────────────────────────────────────────────────────────
+// Re-export shared types so existing imports from this file keep working
+export type { ScaffoldAsset, ScaffoldRequest, ScaffoldResult } from '@gamma/types';
 
-export interface ScaffoldAsset {
-  path: string;
-  content: string;
-  encoding: 'base64' | 'utf8';
-}
-
-export interface ScaffoldRequest {
-  appId: string;
-  displayName: string;
-  sourceCode: string;
-  commit?: boolean;
-  strictCheck?: boolean;
-  files?: ScaffoldAsset[];
-  contextDoc?: string;
-  agentPrompt?: string;
-}
-
-export interface ScaffoldResult {
-  ok: boolean;
-  error?: string;
-  filePath?: string;
-  commitHash?: string;
-  modulePath?: string;
-}
+// ── Kernel-internal interfaces ────────────────────────────────────────────
 
 export interface JailedFileSaveParams {
   appId: string;
@@ -377,7 +357,7 @@ export class ScaffoldService {
     // Preserve createdAt from existing entry if present
     let createdAt = now;
     try {
-      const existing = await this.redis.hget('gamma:app:registry', safeId);
+      const existing = await this.redis.hget(REDIS_KEYS.APP_REGISTRY, safeId);
       if (existing) {
         const parsed = JSON.parse(existing);
         if (parsed.createdAt) createdAt = parsed.createdAt;
@@ -387,7 +367,7 @@ export class ScaffoldService {
     }
 
     await this.redis.hset(
-      'gamma:app:registry',
+      REDIS_KEYS.APP_REGISTRY,
       safeId,
       JSON.stringify({
         appId: safeId,
@@ -402,7 +382,7 @@ export class ScaffoldService {
 
     // Broadcast component_ready via SSE (include updatedAt for frontend hot-reload)
     await this.redis.xadd(
-      'gamma:sse:broadcast',
+      REDIS_KEYS.SSE_BROADCAST,
       '*',
       ...flattenEntry({
         type: 'component_ready',
@@ -447,7 +427,7 @@ export class ScaffoldService {
       // Refresh app registry entry without mutating other fields
       let entry: import('@gamma/types').AppRegistryEntry | null = null;
       try {
-        const raw = await this.redis.hget('gamma:app:registry', safeId);
+        const raw = await this.redis.hget(REDIS_KEYS.APP_REGISTRY, safeId);
         if (raw) {
           entry = JSON.parse(raw) as import('@gamma/types').AppRegistryEntry;
         }
@@ -472,14 +452,14 @@ export class ScaffoldService {
       };
 
       await this.redis.hset(
-        'gamma:app:registry',
+        REDIS_KEYS.APP_REGISTRY,
         safeId,
         JSON.stringify(registryEntry),
       );
 
       // Broadcast component_ready so DynamicAppRenderer hot-reloads
       await this.redis.xadd(
-        'gamma:sse:broadcast',
+        REDIS_KEYS.SSE_BROADCAST,
         '*',
         ...flattenEntry({
           type: 'component_ready',
@@ -505,7 +485,7 @@ export class ScaffoldService {
 
   /** Return full app registry from Redis for frontend */
   async getRegistry(): Promise<Record<string, import('@gamma/types').AppRegistryEntry>> {
-    const raw = await this.redis.hgetall('gamma:app:registry');
+    const raw = await this.redis.hgetall(REDIS_KEYS.APP_REGISTRY);
     const registry: Record<string, import('@gamma/types').AppRegistryEntry> = {};
     for (const [id, json] of Object.entries(raw)) {
       try {
@@ -531,7 +511,7 @@ export class ScaffoldService {
     }
 
     // Clean up user-persisted app data from Redis
-    const dataKeys = await this.redis.keys(`gamma:app-data:${safeId}:*`);
+    const dataKeys = await this.redis.keys(`${REDIS_KEYS.APP_DATA_PREFIX}${safeId}:*`);
     if (dataKeys.length > 0) {
       await this.redis.del(...dataKeys);
       this.logger.log(`Deleted ${dataKeys.length} app-data keys for '${safeId}'`);
@@ -563,11 +543,11 @@ export class ScaffoldService {
     }
 
     // Remove from app registry
-    await this.redis.hdel('gamma:app:registry', safeId);
+    await this.redis.hdel(REDIS_KEYS.APP_REGISTRY, safeId);
 
     // Broadcast removal
     await this.redis.xadd(
-      'gamma:sse:broadcast',
+      REDIS_KEYS.SSE_BROADCAST,
       '*',
       ...flattenEntry({ type: 'component_removed', appId: safeId }),
     );

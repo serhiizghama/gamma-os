@@ -36,6 +36,7 @@ export type GammaSSEEvent =
   | { type: 'thinking'; windowId: string; runId: string; text: string }
   // Assistant
   | { type: 'assistant_delta'; windowId: string; runId: string; text: string }
+  | { type: 'assistant_update'; windowId: string; runId: string; text: string }
   // Tools
   | {
       type: 'tool_call';
@@ -231,9 +232,98 @@ export const REDIS_KEYS = {
   SSE_BROADCAST: 'gamma:sse:broadcast',
   MEMORY_BUS: 'gamma:memory:bus',
   APP_REGISTRY: 'gamma:app:registry',
+  APP_DATA_PREFIX: 'gamma:app-data:',
   STATE_PREFIX: 'gamma:state:',
   EVENT_LAG: 'gamma:metrics:event_lag',
 } as const;
 
 /** Stream ID is always a string — never parse as number (precision loss) */
 export type StreamID = string;
+
+// ── §10 Window & UI Models ────────────────────────────────────────────────
+
+export interface WindowCoordinates {
+  x: number;
+  y: number;
+}
+
+export interface WindowDimensions {
+  width: number;
+  height: number;
+}
+
+export interface WindowNode {
+  id: string;
+  appId: string;
+  title: string;
+  coordinates: WindowCoordinates;
+  dimensions: WindowDimensions;
+  zIndex: number;
+  isMinimized: boolean;
+  isMaximized: boolean;
+  prevCoordinates?: WindowCoordinates;
+  prevDimensions?: WindowDimensions;
+  openedAt: number;
+}
+
+export interface Notification {
+  id: string;
+  appId: string;
+  title: string;
+  body: string;
+  timestamp: number;
+  read: boolean;
+}
+
+export interface UISettings {
+  theme: 'dark' | 'light';
+  accentColor?: string;
+  /** px — blob filter blur (60–140) */
+  bgBlur: number;
+  /** s — base breath cycle duration (10–60) */
+  bgSpeed: number;
+}
+
+export interface OSStore {
+  windows: Record<string, WindowNode>;
+  zIndexCounter: number;
+  focusedWindowId: string | null;
+
+  launchpadOpen: boolean;
+  notifications: Notification[];
+  toastQueue: Notification[];
+
+  uiSettings: UISettings;
+
+  /** System Architect panel visibility */
+  architectOpen: boolean;
+
+  /** Generated app registry (from API + component_ready/removed SSE) */
+  appRegistry: Record<string, AppRegistryEntry>;
+  setAppRegistry: (registry: Record<string, AppRegistryEntry>) => void;
+  updateAppRegistryEntry: (appId: string, entry: Partial<AppRegistryEntry>) => void;
+  removeAppRegistryEntry: (appId: string) => void;
+
+  /** Per-window agent panel (✨) open state — keyed by window id */
+  windowAgentPanelOpen: Record<string, boolean>;
+  toggleWindowAgentPanel: (windowId: string) => void;
+
+  openWindow: (appId: string, title: string) => void;
+  closeWindow: (id: string) => void;
+  minimizeWindow: (id: string) => void;
+  focusWindow: (id: string) => void;
+  maximizeWindow: (id: string) => void;
+  updateWindowPosition: (id: string, coords: WindowCoordinates) => void;
+  updateWindowDimensions: (id: string, dims: WindowDimensions) => void;
+
+  toggleLaunchpad: () => void;
+  closeLaunchpad: () => void;
+
+  toggleArchitect: () => void;
+
+  pushNotification: (n: Omit<Notification, 'id' | 'timestamp' | 'read'>) => void;
+  dismissToast: (id: string) => void;
+
+  updateUISettings: (patch: Partial<UISettings>) => void;
+  resetAll: () => void;
+}

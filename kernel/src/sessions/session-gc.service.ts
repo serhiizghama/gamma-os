@@ -5,6 +5,7 @@ import Redis from 'ioredis';
 import { REDIS_CLIENT } from '../redis/redis.constants';
 import { SessionsService } from './sessions.service';
 import type { WindowSession } from '@gamma/types';
+import { REDIS_KEYS } from '@gamma/types';
 
 /**
  * Session Garbage Collector (spec §4.4 v1.6)
@@ -36,7 +37,7 @@ export class SessionGcService {
 
   @Cron(CronExpression.EVERY_HOUR)
   async pruneIdleSessions(): Promise<void> {
-    const raw = await this.redis.hgetall('gamma:sessions');
+    const raw = await this.redis.hgetall(REDIS_KEYS.SESSIONS);
     const now = Date.now();
     let collected = 0;
 
@@ -46,7 +47,7 @@ export class SessionGcService {
 
         // Check lastEventAt from the state hash
         const lastEventAt = await this.redis.hget(
-          `gamma:state:${windowId}`,
+          `${REDIS_KEYS.STATE_PREFIX}${windowId}`,
           'lastEventAt',
         );
 

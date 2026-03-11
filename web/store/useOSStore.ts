@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { v4 as uuid } from "uuid";
-import type { OSStore, Notification, WindowNode, UISettings } from "../types/os";
+import type { OSStore, Notification, WindowNode, UISettings } from "@gamma/types";
 
 const INITIAL_Z = 100;
 

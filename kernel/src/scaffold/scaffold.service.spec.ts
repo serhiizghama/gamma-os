@@ -28,6 +28,7 @@ jest.mock('simple-git', () => ({
 }));
 
 import { ScaffoldService } from './scaffold.service';
+import { REDIS_KEYS } from '@gamma/types';
 
 // ── fs/promises mock ─────────────────────────────────────────────────────
 
@@ -279,7 +280,7 @@ describe('ScaffoldService', () => {
       expect(result.modulePath).toBe('./web/apps/generated/weather/WeatherApp');
 
       const hsetCall = mockRedis.hset.mock.calls[0];
-      expect(hsetCall[0]).toBe('gamma:app:registry');
+      expect(hsetCall[0]).toBe(REDIS_KEYS.APP_REGISTRY);
       expect(hsetCall[1]).toBe('weather');
       const entry = JSON.parse(hsetCall[2]);
       expect(entry.bundlePath).toBe('./web/apps/generated/weather/');
@@ -350,14 +351,14 @@ describe('ScaffoldService', () => {
 
     it('should delete app-data Redis keys when they exist', async () => {
       const fakeKeys = [
-        'gamma:app-data:weather:selectedCities',
-        'gamma:app-data:weather:units',
+        `${REDIS_KEYS.APP_DATA_PREFIX}weather:selectedCities`,
+        `${REDIS_KEYS.APP_DATA_PREFIX}weather:units`,
       ];
       mockRedis.keys.mockResolvedValue(fakeKeys);
 
       await service.remove('weather');
 
-      expect(mockRedis.keys).toHaveBeenCalledWith('gamma:app-data:weather:*');
+      expect(mockRedis.keys).toHaveBeenCalledWith(`${REDIS_KEYS.APP_DATA_PREFIX}weather:*`);
       expect(mockRedis.del).toHaveBeenCalledWith(...fakeKeys);
     });
 
@@ -366,7 +367,7 @@ describe('ScaffoldService', () => {
 
       await service.remove('weather');
 
-      expect(mockRedis.keys).toHaveBeenCalledWith('gamma:app-data:weather:*');
+      expect(mockRedis.keys).toHaveBeenCalledWith(`${REDIS_KEYS.APP_DATA_PREFIX}weather:*`);
       expect(mockRedis.del).not.toHaveBeenCalled();
     });
 
@@ -393,11 +394,11 @@ describe('ScaffoldService', () => {
       );
 
       // Registry removal
-      expect(mockRedis.hdel).toHaveBeenCalledWith('gamma:app:registry', 'weather');
+      expect(mockRedis.hdel).toHaveBeenCalledWith(REDIS_KEYS.APP_REGISTRY, 'weather');
 
       // SSE broadcast
       expect(mockRedis.xadd).toHaveBeenCalledWith(
-        'gamma:sse:broadcast',
+        REDIS_KEYS.SSE_BROADCAST,
         '*',
         'type', 'component_removed',
         'appId', 'weather',

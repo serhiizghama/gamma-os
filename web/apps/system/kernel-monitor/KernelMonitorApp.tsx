@@ -1,15 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
+import type { WindowSession } from "@gamma/types";
 
-// ── Types (from @gamma/types — inlined for zero-dep frontend use) ────────
-
-interface WindowSession {
-  windowId: string;
-  appId: string;
-  sessionKey: string;
-  agentId: string;
-  createdAt: number;
-  status: string;
-}
+// ── Local UI types ────────────────────────────────────────────────────────
 
 interface SSELogEntry {
   id: number;

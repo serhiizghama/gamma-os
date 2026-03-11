@@ -10,9 +10,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { SessionsService } from './sessions.service';
-import type { CreateSessionDto } from './sessions.interfaces';
 import type { SendMessageResult } from './sessions.service';
-import type { WindowSession, WindowStateSyncSnapshot } from '@gamma/types';
+import type {
+  WindowSession,
+  CreateSessionDto,
+  WindowStateSyncSnapshot,
+} from '@gamma/types';
 
 @Controller('api/sessions')
 export class SessionsController {

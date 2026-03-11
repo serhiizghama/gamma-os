@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import type { AgentStatus } from "@gamma/types";
+import type { AgentStatus, GammaSSEEvent } from "@gamma/types";
 import type { ChatMessage, ToolCallEntry } from "../components/MessageList";
 import { API_BASE } from "../constants/api";
 
@@ -35,16 +35,14 @@ export function useAgentStream(windowId: string): AgentStreamState {
     es.onmessage = (ev) => {
       if (!mountedRef.current) return;
 
-      let event: Record<string, unknown>;
+      let event: GammaSSEEvent;
       try {
-        event = JSON.parse(ev.data);
+        event = JSON.parse(ev.data) as GammaSSEEvent;
       } catch {
         return;
       }
 
-      const type = event.type as string;
-
-      switch (type) {
+      switch (event.type) {
         case "keep_alive":
           break;
 
@@ -83,13 +81,12 @@ export function useAgentStream(windowId: string): AgentStreamState {
 
         case "lifecycle_error": {
           setStatus("error");
-          const errMsg = (event.message as string) || "Unknown error";
           setMessages((prev) => [
             ...prev,
             {
               id: `err-${Date.now()}`,
               role: "assistant",
-              text: `⚠️ Error: ${errMsg}`,
+              text: `⚠️ Error: ${event.message}`,
               ts: Date.now(),
             },
           ]);
@@ -101,7 +98,7 @@ export function useAgentStream(windowId: string): AgentStreamState {
         case "thinking": {
           const cur = currentAssistantRef.current;
           if (cur) {
-            cur.thinking += (event.text as string) || "";
+            cur.thinking += event.text;
           }
           break;
         }
@@ -111,33 +108,28 @@ export function useAgentStream(windowId: string): AgentStreamState {
           const cur = currentAssistantRef.current;
           if (cur) {
             // Cumulative overwrite — immune to dropped packets, double-mounts, out-of-order chunks
-            cur.text = (event.text as string) || "";
+            cur.text = event.text;
           }
           break;
         }
 
         case "tool_call": {
-          const name = (event.name as string) || "unknown";
-          const args = event.arguments
-            ? JSON.stringify(event.arguments).slice(0, 64)
-            : "";
+          const { name, arguments: args } = event;
+          const argsStr = args ? JSON.stringify(args).slice(0, 64) : "";
           const cur = currentAssistantRef.current;
           if (cur) {
-            cur.toolCalls.push({ name, args });
+            cur.toolCalls.push({ name, args: argsStr });
           }
-          setPendingToolLines((prev) => [...prev, `🔧 ${name}(${args})`]);
+          setPendingToolLines((prev) => [...prev, `🔧 ${name}(${argsStr})`]);
           break;
         }
 
         case "tool_result": {
-          const name = (event.name as string) || "unknown";
-          const result = event.result
-            ? JSON.stringify(event.result).slice(0, 64)
-            : "";
-          const isError = event.isError as boolean;
+          const { name, result, isError } = event;
+          const resultStr = result ? JSON.stringify(result).slice(0, 64) : "";
           const cur = currentAssistantRef.current;
           if (cur) {
-            cur.toolCalls.push({ name, result, isError });
+            cur.toolCalls.push({ name, result: resultStr, isError });
           }
           setPendingToolLines((prev) =>
             prev.filter((l) => !l.includes(name)),
@@ -146,27 +138,21 @@ export function useAgentStream(windowId: string): AgentStreamState {
         }
 
         case "user_message": {
-          const text = (event.text as string) || "";
-          const rawTs = event.ts;
-          const ts =
-            typeof rawTs === "number"
-              ? rawTs
-              : typeof rawTs === "string"
-                ? parseInt(rawTs, 10) || Date.now()
-                : Date.now();
           setMessages((prev) => [
             ...prev,
             {
-              id: `u-${ts}`,
+              id: `u-${event.ts}`,
               role: "user",
-              text,
-              ts,
+              text: event.text,
+              ts: event.ts,
             },
           ]);
           break;
         }
 
         default:
+          // component_ready, component_removed, gateway_status, error
+          // handled by useSystemEvents or ignored
           break;
       }
     };

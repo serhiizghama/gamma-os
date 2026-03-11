@@ -17,7 +17,7 @@ export function TitleBar({
   windowId,
   title,
   onDragStart,
-  hasAgent = false,
+  hasAgent: _hasAgent = false,
   agentPanelOpen = false,
   onToggleAgent,
 }: TitleBarProps): React.ReactElement {

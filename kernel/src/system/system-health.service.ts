@@ -6,6 +6,7 @@ import Redis from 'ioredis';
 import { REDIS_CLIENT } from '../redis/redis.constants';
 import { GatewayWsService } from '../gateway/gateway-ws.service';
 import type { SystemHealthReport } from '@gamma/types';
+import { REDIS_KEYS } from '@gamma/types';
 
 const execFileAsync = promisify(execFile);
 
@@ -165,7 +166,7 @@ export class SystemHealthService {
 
   private async getEventLag(): Promise<SystemHealthReport['eventLag']> {
     try {
-      const samples = await this.redis.lrange('gamma:metrics:event_lag', 0, 99);
+      const samples = await this.redis.lrange(REDIS_KEYS.EVENT_LAG, 0, 99);
       if (!samples.length) return null;
 
       const nums = samples.map(Number).filter((n) => !isNaN(n) && n >= 0);

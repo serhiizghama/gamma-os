@@ -5,12 +5,16 @@ import * as path from 'path';
 import { ulid } from 'ulid';
 import { REDIS_CLIENT } from '../redis/redis.constants';
 import { GatewayWsService } from '../gateway/gateway-ws.service';
-import type { WindowSession, CreateSessionDto } from './sessions.interfaces';
 import { ToolWatchdogService } from '../gateway/tool-watchdog.service';
-import type { AgentStatus, WindowStateSyncSnapshot } from '@gamma/types';
+import type {
+  AgentStatus,
+  MemoryBusEntry,
+  WindowSession,
+  CreateSessionDto,
+  WindowStateSyncSnapshot,
+} from '@gamma/types';
+import { REDIS_KEYS } from '@gamma/types';
 import { ScaffoldService } from '../scaffold/scaffold.service';
-
-const SESSIONS_KEY = 'gamma:sessions';
 const APP_OWNER_PREFIX = 'app-owner-';
 const APP_OWNER_INIT_FIELD = 'appOwnerInitialized';
 
@@ -63,7 +67,7 @@ export class SessionsService {
       status: 'idle',
     };
 
-    await this.redis.hset(SESSIONS_KEY, dto.windowId, JSON.stringify(session));
+    await this.redis.hset(REDIS_KEYS.SESSIONS, dto.windowId, JSON.stringify(session));
 
     // Keep Gateway's in-memory mapping in sync so events can be routed
     this.gatewayWs.registerWindowSession(dto.sessionKey, dto.windowId);
@@ -85,7 +89,7 @@ export class SessionsService {
 
   /** List all active sessions */
   async findAll(): Promise<WindowSession[]> {
-    const raw = await this.redis.hgetall(SESSIONS_KEY);
+    const raw = await this.redis.hgetall(REDIS_KEYS.SESSIONS);
     return Object.values(raw).map(
       (json) => JSON.parse(json) as WindowSession,
     );
@@ -93,7 +97,7 @@ export class SessionsService {
 
   /** Get a session by windowId */
   async findByWindowId(windowId: string): Promise<WindowSession | null> {
-    const raw = await this.redis.hget(SESSIONS_KEY, windowId);
+    const raw = await this.redis.hget(REDIS_KEYS.SESSIONS, windowId);
     if (!raw) return null;
     return JSON.parse(raw) as WindowSession;
   }
@@ -115,7 +119,7 @@ export class SessionsService {
     if (!session) return;
     session.status = status;
     await this.redis.hset(
-      SESSIONS_KEY,
+      REDIS_KEYS.SESSIONS,
       windowId,
       JSON.stringify(session),
     );
@@ -131,14 +135,14 @@ export class SessionsService {
 
     // Immediately update Redis state — don't wait for Gateway confirmation
     await this.redis.hset(
-      `gamma:state:${windowId}`,
+      `${REDIS_KEYS.STATE_PREFIX}${windowId}`,
       'status', 'aborted',
       'runId', '',
     );
 
     // Push aborted lifecycle event to SSE stream
     await this.redis.xadd(
-      `gamma:sse:${windowId}`, '*',
+      `${REDIS_KEYS.SSE_PREFIX}${windowId}`, '*',
       'type', 'lifecycle_error',
       'windowId', windowId,
       'runId', '',
@@ -156,7 +160,7 @@ export class SessionsService {
     const session = await this.findByWindowId(windowId);
     if (!session) return null;
 
-    const raw = await this.redis.hgetall(`gamma:state:${windowId}`);
+    const raw = await this.redis.hgetall(`${REDIS_KEYS.STATE_PREFIX}${windowId}`);
 
     return {
       windowId,
@@ -184,7 +188,7 @@ export class SessionsService {
 
     // 1. Echo user message into SSE for instant UI feedback
     await this.redis.xadd(
-      `gamma:sse:${windowId}`, '*',
+      `${REDIS_KEYS.SSE_PREFIX}${windowId}`, '*',
       ...flattenEntry({
         type: 'user_message',
         windowId,
@@ -194,16 +198,17 @@ export class SessionsService {
     );
 
     // 2. Write to memory bus for decision tree reconstruction
+    const busEntry: Omit<MemoryBusEntry, 'id'> = {
+      sessionKey: session.sessionKey,
+      windowId,
+      kind: 'text',
+      content: message,
+      ts: nowMs,
+      stepId: ulid(),
+    };
     await this.redis.xadd(
-      'gamma:memory:bus', '*',
-      ...flattenEntry({
-        id: ulid(),
-        sessionKey: session.sessionKey,
-        windowId,
-        kind: 'text',
-        content: message,
-        ts: nowMs,
-      }),
+      REDIS_KEYS.MEMORY_BUS, '*',
+      ...flattenEntry({ id: ulid(), ...busEntry }),
     );
 
     // 3. Forward to OpenClaw Gateway (fire-and-forget dispatch)
@@ -217,7 +222,7 @@ export class SessionsService {
       if (!accepted) {
         const errorMessage = '[OpenClaw] Gateway unreachable';
         await this.redis.xadd(
-          `gamma:sse:${windowId}`,
+          `${REDIS_KEYS.SSE_PREFIX}${windowId}`,
           '*',
           ...flattenEntry({
             type: 'lifecycle_error',
@@ -240,7 +245,7 @@ export class SessionsService {
       const errorMessage = '[OpenClaw] Gateway unreachable';
       this.logger.error(`${errorMessage}: ${msg}`);
       await this.redis.xadd(
-        `gamma:sse:${windowId}`,
+        `${REDIS_KEYS.SSE_PREFIX}${windowId}`,
         '*',
         ...flattenEntry({
           type: 'lifecycle_error',
@@ -261,7 +266,7 @@ export class SessionsService {
 
     // 5. Update lastEventAt for GC freshness tracking
     await this.redis.hset(
-      `gamma:state:${windowId}`,
+      `${REDIS_KEYS.STATE_PREFIX}${windowId}`,
       'lastEventAt',
       String(nowMs),
     );
@@ -297,7 +302,7 @@ export class SessionsService {
     }
 
     // Guard: only run once per window/session lifecycle
-    const stateKey = `gamma:state:${windowId}`;
+    const stateKey = `${REDIS_KEYS.STATE_PREFIX}${windowId}`;
     const alreadyInit = await this.redis.hget(stateKey, APP_OWNER_INIT_FIELD);
     if (alreadyInit === '1') {
       return;
@@ -525,9 +530,9 @@ export class SessionsService {
     }
 
     // 2. Clean up Redis
-    await this.redis.hdel(SESSIONS_KEY, windowId);
-    await this.redis.del(`gamma:sse:${windowId}`);
-    await this.redis.del(`gamma:state:${windowId}`);
+    await this.redis.hdel(REDIS_KEYS.SESSIONS, windowId);
+    await this.redis.del(`${REDIS_KEYS.SSE_PREFIX}${windowId}`);
+    await this.redis.del(`${REDIS_KEYS.STATE_PREFIX}${windowId}`);
 
     // 3. Clear watchdog timers
     this.toolWatchdog.clearWindow(windowId);

@@ -7,12 +7,8 @@ import {
   Body,
   Logger,
 } from '@nestjs/common';
-import {
-  ScaffoldService,
-  ScaffoldRequest,
-  ScaffoldResult,
-} from './scaffold.service';
-import type { AppRegistryEntry } from '@gamma/types';
+import { ScaffoldService } from './scaffold.service';
+import type { AppRegistryEntry, ScaffoldRequest, ScaffoldResult } from '@gamma/types';
 
 @Controller('api/scaffold')
 export class ScaffoldController {

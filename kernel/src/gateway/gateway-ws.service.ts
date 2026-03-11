@@ -17,7 +17,7 @@ import {
   isReasoningStream,
 } from './event-classifier';
 import { ToolWatchdogService } from './tool-watchdog.service';
-import type { GWAgentEventPayload, WindowSession } from '@gamma/types';
+import type { GWAgentEventPayload, MemoryBusEntry, WindowSession } from '@gamma/types';
 
 // ── Local types ───────────────────────────────────────────────────────────
 
@@ -348,7 +348,7 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
     }
 
     const { stream, data, runId } = payload;
-    const sseKey = `gamma:sse:${windowId}`;
+    const sseKey = `${REDIS_KEYS.SSE_PREFIX}${windowId}`;
     const nowMs = Date.now();
 
     // Event lag tracking (for system health / observability)
@@ -357,8 +357,8 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
       if (lagMs >= 0) {
         this.redis
           .pipeline()
-          .lpush('gamma:metrics:event_lag', lagMs)
-          .ltrim('gamma:metrics:event_lag', 0, 99)
+          .lpush(REDIS_KEYS.EVENT_LAG, lagMs)
+          .ltrim(REDIS_KEYS.EVENT_LAG, 0, 99)
           .exec()
           .catch(() => {}); // best-effort
       }
@@ -387,7 +387,7 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
 
         // Update Redis live state (spec §4.1)
         await this.redis.hset(
-          `gamma:state:${windowId}`,
+          `${REDIS_KEYS.STATE_PREFIX}${windowId}`,
           'status', 'running',
           'runId', runId,
           'lastEventAt', String(nowMs),
@@ -396,7 +396,7 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
           'thinkingTrace', '',
           'pendingToolLines', '[]',
         );
-        await this.redis.expire(`gamma:state:${windowId}`, 14400); // 4h TTL
+        await this.redis.expire(`${REDIS_KEYS.STATE_PREFIX}${windowId}`, 14400); // 4h TTL
         return;
       }
 
@@ -423,7 +423,7 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
 
         // Clear live state but keep lastEventId for gap protection
         await this.redis.hset(
-          `gamma:state:${windowId}`,
+          `${REDIS_KEYS.STATE_PREFIX}${windowId}`,
           'status', 'idle',
           'runId', '',
           'streamText', '',
@@ -432,7 +432,7 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
           'lastEventAt', String(nowMs),
           'lastEventId', eventId,
         );
-        await this.redis.expire(`gamma:state:${windowId}`, 14400); // 4h TTL
+        await this.redis.expire(`${REDIS_KEYS.STATE_PREFIX}${windowId}`, 14400); // 4h TTL
 
         // Cleanup run tracking + watchdog timers
         this.runStepCounters.delete(runId);
@@ -449,7 +449,7 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
         });
 
         await this.redis.hset(
-          `gamma:state:${windowId}`,
+          `${REDIS_KEYS.STATE_PREFIX}${windowId}`,
           'status', 'error',
           'runId', '',
           'lastEventAt', String(nowMs),
@@ -478,7 +478,7 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
 
       // Update live state for F5 recovery
       await this.redis.hset(
-        `gamma:state:${windowId}`,
+        `${REDIS_KEYS.STATE_PREFIX}${windowId}`,
         'thinkingTrace', text,
         'lastEventAt', String(nowMs),
         'lastEventId', eventId,
@@ -518,7 +518,7 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
         });
 
         await this.redis.hset(
-          `gamma:state:${windowId}`,
+          `${REDIS_KEYS.STATE_PREFIX}${windowId}`,
           'thinkingTrace', thinkingContent,
           'lastEventAt', String(nowMs),
           'lastEventId', thinkEventId,
@@ -549,7 +549,7 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
         });
 
         await this.redis.hset(
-          `gamma:state:${windowId}`,
+          `${REDIS_KEYS.STATE_PREFIX}${windowId}`,
           'streamText', fullText,
           'lastEventAt', String(nowMs),
           'lastEventId', textEventId,
@@ -576,11 +576,11 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
         });
 
         // Update pending tool lines in live state
-        const raw = await this.redis.hget(`gamma:state:${windowId}`, 'pendingToolLines');
+        const raw = await this.redis.hget(`${REDIS_KEYS.STATE_PREFIX}${windowId}`, 'pendingToolLines');
         const lines: string[] = raw ? (JSON.parse(raw) as string[]) : [];
         lines.push(`🔧 \`${name}\`(${JSON.stringify(data?.arguments ?? {})})`);
         await this.redis.hset(
-          `gamma:state:${windowId}`,
+          `${REDIS_KEYS.STATE_PREFIX}${windowId}`,
           'pendingToolLines', JSON.stringify(lines),
           'lastEventAt', String(nowMs),
           'lastEventId', eventId,
@@ -600,7 +600,7 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
             });
 
             await this.redis.hset(
-              `gamma:state:${windowId}`,
+              `${REDIS_KEYS.STATE_PREFIX}${windowId}`,
               'status', 'error',
               'runId', '',
               'lastEventAt', String(Date.now()),
@@ -646,12 +646,12 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
         });
 
         // Update pending tool lines
-        const raw = await this.redis.hget(`gamma:state:${windowId}`, 'pendingToolLines');
+        const raw = await this.redis.hget(`${REDIS_KEYS.STATE_PREFIX}${windowId}`, 'pendingToolLines');
         const lines: string[] = raw ? (JSON.parse(raw) as string[]) : [];
         const status = data?.isError ? '❌' : '✅';
         lines.push(`${status} \`${name}\` → ${JSON.stringify(data?.result ?? null)}`);
         await this.redis.hset(
-          `gamma:state:${windowId}`,
+          `${REDIS_KEYS.STATE_PREFIX}${windowId}`,
           'pendingToolLines', JSON.stringify(lines),
           'lastEventAt', String(nowMs),
           'lastEventId', eventId,
@@ -701,17 +701,9 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
     return eventId!; // xadd always returns an ID when using '*'
   }
 
-  private async pushMemoryBus(entry: {
-    sessionKey: string;
-    windowId: string;
-    kind: string;
-    content: string;
-    ts: number;
-    stepId: string;
-    parentId?: string;
-  }): Promise<void> {
+  private async pushMemoryBus(entry: Omit<MemoryBusEntry, 'id'>): Promise<void> {
     await this.redis.xadd(
-      'gamma:memory:bus',
+      REDIS_KEYS.MEMORY_BUS,
       '*',
       ...flattenEntry({
         id: ulid(),
@@ -729,7 +721,7 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
     this.logger.warn(`chat.send rejected for ${windowId}: ${errMsg}`);
     this.redis
       .xadd(
-        `gamma:sse:${windowId}`,
+        `${REDIS_KEYS.SSE_PREFIX}${windowId}`,
         '*',
         ...flattenEntry({
           type: 'lifecycle_error',
@@ -748,7 +740,7 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
 
   private broadcastGatewayStatus(status: 'connected' | 'disconnected'): void {
     this.redis
-      .xadd('gamma:sse:broadcast', '*', ...flattenEntry({
+      .xadd(REDIS_KEYS.SSE_BROADCAST, '*', ...flattenEntry({
         type: 'gateway_status',
         status,
         ts: String(Date.now()),

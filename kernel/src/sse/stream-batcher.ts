@@ -11,6 +11,8 @@
  * Result: ~500 events/s → ~7 flushes/s (one per 50ms window)
  */
 
+import type { GammaSSEEvent } from '@gamma/types';
+
 const BATCH_WINDOW_MS = 50;
 
 interface PendingBatch {
@@ -25,7 +27,7 @@ export class StreamBatcher {
   private batches = new Map<string, PendingBatch>();
 
   constructor(
-    private readonly flush: (event: Record<string, unknown>) => void,
+    private readonly flush: (event: GammaSSEEvent) => void,
   ) {}
 
   /**
@@ -33,23 +35,22 @@ export class StreamBatcher {
    * - thinking / assistant_delta / assistant_update → batched (50ms debounce)
    * - everything else → immediate passthrough
    */
-  push(event: Record<string, unknown>): void {
-    const type = event['type'] as string | undefined;
+  push(event: GammaSSEEvent): void {
+    const { type } = event;
 
     // Only batch thinking and assistant text (delta + update both carry cumulative text)
     if (type !== 'thinking' && type !== 'assistant_delta' && type !== 'assistant_update') {
       // Immediate passthrough — also force-flush any pending batch for this window
-      const windowId = event['windowId'] as string | undefined;
-      const runId = event['runId'] as string | undefined;
-      if (windowId && runId) {
-        this.flushBatch(`${windowId}:${runId}`);
+      if ('windowId' in event && 'runId' in event) {
+        this.flushBatch(`${event.windowId}:${event.runId}`);
       }
       this.flush(event);
       return;
     }
 
-    const windowId = event['windowId'] as string;
-    const runId = event['runId'] as string;
+    // type is narrowed to 'thinking' | 'assistant_delta' | 'assistant_update'
+    // all three variants carry windowId: string, runId: string, text: string
+    const { windowId, runId } = event;
     const key = `${windowId}:${runId}`;
 
     let batch = this.batches.get(key);
@@ -66,10 +67,10 @@ export class StreamBatcher {
 
     // Gateway sends full accumulated text — last value wins
     if (type === 'thinking') {
-      batch.thinkingText = event['text'] as string;
+      batch.thinkingText = event.text;
     } else {
-      // assistant_delta or assistant_update — both are cumulative
-      batch.deltaText = event['text'] as string;
+      // assistant_delta or assistant_update — both are cumulative; normalize to assistant_delta on flush
+      batch.deltaText = event.text;
     }
 
     // Reset debounce timer

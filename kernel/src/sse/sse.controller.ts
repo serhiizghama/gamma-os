@@ -3,12 +3,8 @@ import { Observable } from 'rxjs';
 import Redis from 'ioredis';
 import { REDIS_CLIENT } from '../redis/redis.constants';
 import { StreamBatcher } from './stream-batcher';
-
-// Redis key constants (from @gamma/types — inlined to avoid runtime path alias issues)
-const REDIS_KEYS = {
-  SSE_PREFIX: 'gamma:sse:',
-  SSE_BROADCAST: 'gamma:sse:broadcast',
-} as const;
+import { REDIS_KEYS } from '@gamma/types';
+import type { GammaSSEEvent } from '@gamma/types';
 
 /**
  * SSE Multiplexer — streams live events from Redis to the browser (spec §7.1).
@@ -74,7 +70,8 @@ export class SseController {
                 lastIds[streamKey] = id;
 
                 // Parse flat field array [k1, v1, k2, v2, ...] → object
-                const event = parseStreamFields(fields);
+                // Cast to GammaSSEEvent — trusted internal boundary (Redis ← kernel)
+                const event = parseStreamFields(fields) as GammaSSEEvent;
 
                 if (!closed) {
                   batcher.push(event);
@@ -125,14 +122,15 @@ export class SseController {
 
 /**
  * Convert Redis Stream field array [k1, v1, k2, v2, ...] to an object.
- * Attempts JSON.parse on values that look like JSON.
+ * - JSON objects/arrays and booleans/null are parsed via JSON.parse
+ * - Numeric strings (timestamps, counters) are converted to numbers
+ * - Everything else remains a string
  */
 function parseStreamFields(fields: string[]): Record<string, unknown> {
   const obj: Record<string, unknown> = {};
   for (let i = 0; i < fields.length; i += 2) {
     const key = fields[i];
     const raw = fields[i + 1];
-    // Try to parse JSON values (arrays, objects, numbers, booleans)
     if (
       raw.startsWith('{') ||
       raw.startsWith('[') ||
@@ -146,6 +144,11 @@ function parseStreamFields(fields: string[]): Record<string, unknown> {
       } catch {
         // fall through to string
       }
+    }
+    // Numeric strings (timestamps, token counts, seq numbers)
+    if (/^-?\d+(\.\d+)?$/.test(raw)) {
+      obj[key] = Number(raw);
+      continue;
     }
     obj[key] = raw;
   }
