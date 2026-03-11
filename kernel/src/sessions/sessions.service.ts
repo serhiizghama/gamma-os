@@ -1,13 +1,29 @@
-import { Injectable, Inject, Logger, ServiceUnavailableException } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  Logger,
+  ServiceUnavailableException,
+  forwardRef,
+} from '@nestjs/common';
 import Redis from 'ioredis';
+import * as fs from 'fs/promises';
 import { ulid } from 'ulid';
 import { REDIS_CLIENT } from '../redis/redis.constants';
 import { GatewayWsService } from '../gateway/gateway-ws.service';
 import type { WindowSession, CreateSessionDto } from './sessions.interfaces';
 import { ToolWatchdogService } from '../gateway/tool-watchdog.service';
 import type { AgentStatus, WindowStateSyncSnapshot } from '@gamma/types';
+import { ScaffoldService } from '../scaffold/scaffold.service';
 
 const SESSIONS_KEY = 'gamma:sessions';
+const APP_OWNER_PREFIX = 'app-owner-';
+
+/** Convert kebab-case / snake_case id to PascalCase (matches scaffold.service) */
+function pascal(id: string): string {
+  return id
+    .replace(/[-_]+(.)/g, (_, c: string) => c.toUpperCase())
+    .replace(/^(.)/, (_, c: string) => c.toUpperCase());
+}
 
 /** Flatten an object to [key, value, key, value, ...] for XADD */
 function flattenEntry(obj: Record<string, unknown>): string[] {
@@ -27,6 +43,8 @@ export class SessionsService {
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
     private readonly gatewayWs: GatewayWsService,
     private readonly toolWatchdog: ToolWatchdogService,
+    @Inject(forwardRef(() => ScaffoldService))
+    private readonly scaffoldService: ScaffoldService,
   ) {}
 
   /** Create a new window↔session mapping */
@@ -168,8 +186,18 @@ export class SessionsService {
       }),
     );
 
-    // 3. Forward to OpenClaw Gateway (fire-and-forget dispatch)
-    const { accepted } = this.gatewayWs.sendMessage(session.sessionKey, message, windowId);
+    // 3. Enrich message for app-owner sessions (Loop 9 — Context Injection)
+    const messageToSend = await this.enrichMessageForAppOwner(
+      session.sessionKey,
+      message,
+    );
+
+    // 4. Forward to OpenClaw Gateway (fire-and-forget dispatch)
+    const { accepted } = this.gatewayWs.sendMessage(
+      session.sessionKey,
+      messageToSend,
+      windowId,
+    );
     if (!accepted) {
       await this.redis.xadd(
         `gamma:sse:${windowId}`, '*',
@@ -183,10 +211,105 @@ export class SessionsService {
       throw new ServiceUnavailableException('OpenClaw Gateway not connected');
     }
 
-    // 4. Update lastEventAt for GC freshness tracking
+    // 5. Update lastEventAt for GC freshness tracking
     await this.redis.hset(`gamma:state:${windowId}`, 'lastEventAt', String(nowMs));
 
     return true;
+  }
+
+  /**
+   * Enrich user message with app context for app-owner sessions (Loop 9).
+   * Reads context.md, agent-prompt.md, and main .tsx source via jailPath.
+   * Gracefully skips missing files; returns original message if not app-owner.
+   */
+  private async enrichMessageForAppOwner(
+    sessionKey: string,
+    message: string,
+  ): Promise<string> {
+    if (!sessionKey.startsWith(APP_OWNER_PREFIX)) {
+      return message;
+    }
+
+    const rawAppId = sessionKey.slice(APP_OWNER_PREFIX.length);
+    const appId = rawAppId.replace(/[^a-z0-9-]/gi, '');
+    if (!appId) {
+      this.logger.warn(
+        `app-owner session with invalid appId: ${JSON.stringify(rawAppId)}`,
+      );
+      return message;
+    }
+
+    const parts: string[] = [];
+    const pascalName = pascal(appId);
+    const tsxFileName = `${pascalName}App.tsx`;
+
+    try {
+      // agent-prompt.md (optional — skip if missing)
+      try {
+        const agentPath = this.scaffoldService.jailPath(
+          `${appId}/agent-prompt.md`,
+        );
+        const content = await fs.readFile(agentPath, 'utf8');
+        parts.push('--- AGENT PERSONA ---', content.trim(), '');
+      } catch {
+        // File may not exist yet — use default Dedicated Maintainer preamble
+        parts.push(
+          '--- AGENT PERSONA ---',
+          'You are the Dedicated Maintainer of this application. Your role is to understand, improve, and extend it based on user requests. Apply changes via the update_app tool.',
+          '',
+        );
+      }
+
+      // context.md
+      try {
+        const contextPath = this.scaffoldService.jailPath(
+          `${appId}/context.md`,
+        );
+        const content = await fs.readFile(contextPath, 'utf8');
+        parts.push('--- APP CONTEXT ---', content.trim(), '');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.debug(
+          `App Owner context.md not found for ${appId}: ${msg}`,
+        );
+      }
+
+      // Main .tsx source
+      try {
+        const sourcePath = this.scaffoldService.jailPath(
+          `${appId}/${tsxFileName}`,
+        );
+        const sourceCode = await fs.readFile(sourcePath, 'utf8');
+        parts.push(
+          '--- CURRENT SOURCE CODE ---',
+          '```tsx',
+          sourceCode.trim(),
+          '```',
+          '',
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.warn(
+          `App Owner source ${tsxFileName} not found for ${appId}: ${msg}`,
+        );
+      }
+
+      if (parts.length === 0) {
+        this.logger.warn(
+          `App Owner ${appId}: no context files found, sending raw message`,
+        );
+        return message;
+      }
+
+      parts.push('--- USER REQUEST ---', message);
+      return parts.join('\n');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `App Owner context injection failed for ${appId}: ${msg}`,
+      );
+      return message;
+    }
   }
 
   /** Remove a session mapping (v1.6: explicit Gateway kill) */
