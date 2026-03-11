@@ -226,15 +226,28 @@ export class SessionsService {
     sessionKey: string,
     message: string,
   ): Promise<string> {
+    // Guard: sessionKey must be non-null string
+    if (!sessionKey || typeof sessionKey !== 'string') {
+      this.logger.warn('enrichMessageForAppOwner: sessionKey is empty or invalid');
+      return message;
+    }
+
     if (!sessionKey.startsWith(APP_OWNER_PREFIX)) {
       return message;
     }
 
     const rawAppId = sessionKey.slice(APP_OWNER_PREFIX.length);
     const appId = rawAppId.replace(/[^a-z0-9-]/gi, '');
-    if (!appId) {
+
+    // Strict validation: reject empty, null-like, or literal "undefined"
+    // (occurs when frontend passes win.appId when it is undefined)
+    if (
+      !appId ||
+      appId === 'undefined' ||
+      rawAppId.toLowerCase() === 'undefined'
+    ) {
       this.logger.warn(
-        `app-owner session with invalid appId: ${JSON.stringify(rawAppId)}`,
+        `app-owner session with invalid appId: ${JSON.stringify(rawAppId)} — skipping context injection`,
       );
       return message;
     }
@@ -244,15 +257,18 @@ export class SessionsService {
     const tsxFileName = `${pascalName}App.tsx`;
 
     try {
-      // agent-prompt.md (optional — skip if missing)
+      // agent-prompt.md (optional — skip if missing / ENOENT / EACCES)
       try {
         const agentPath = this.scaffoldService.jailPath(
           `${appId}/agent-prompt.md`,
         );
         const content = await fs.readFile(agentPath, 'utf8');
         parts.push('--- AGENT PERSONA ---', content.trim(), '');
-      } catch {
-        // File may not exist yet — use default Dedicated Maintainer preamble
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.debug(
+          `App Owner agent-prompt.md for ${appId}: ${msg} — using default persona`,
+        );
         parts.push(
           '--- AGENT PERSONA ---',
           'You are the Dedicated Maintainer of this application. Your role is to understand, improve, and extend it based on user requests. Apply changes via the update_app tool.',
@@ -260,7 +276,7 @@ export class SessionsService {
         );
       }
 
-      // context.md
+      // context.md (graceful skip on ENOENT, EACCES, or any read error)
       try {
         const contextPath = this.scaffoldService.jailPath(
           `${appId}/context.md`,
@@ -274,7 +290,7 @@ export class SessionsService {
         );
       }
 
-      // Main .tsx source
+      // Main .tsx source (graceful skip on ENOENT, EACCES, or any read error)
       try {
         const sourcePath = this.scaffoldService.jailPath(
           `${appId}/${tsxFileName}`,
@@ -290,7 +306,7 @@ export class SessionsService {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         this.logger.warn(
-          `App Owner source ${tsxFileName} not found for ${appId}: ${msg}`,
+          `App Owner source ${tsxFileName} for ${appId}: ${msg} — skipping source injection`,
         );
       }
 

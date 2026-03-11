@@ -272,6 +272,9 @@ export function WindowNode({ id }: WindowNodeProps): React.ReactElement | null {
   // ─── AI Assistant toggle: create session on first open, then toggle panel ──
   const handleToggleAgent = useCallback(async () => {
     if (!win) return;
+    if (!win.appId || win.appId === "undefined") {
+      return;
+    }
     const sessionWindowId = `app-owner-${win.appId}`;
     if (!agentPanelOpen) {
       try {
