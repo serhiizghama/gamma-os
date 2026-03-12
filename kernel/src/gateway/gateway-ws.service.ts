@@ -85,6 +85,43 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
     this.sessionToWindow.delete(sessionKey);
   }
 
+  // ── OpenClaw session key boundary translation ──────────────────────────
+
+  /**
+   * Convert an internal Gamma OS session key to the OpenClaw native format.
+   * Internal keys are used everywhere inside Gamma; OpenClaw keys are only
+   * used in the WS frame params that cross the Gateway boundary.
+   *
+   * system-architect         → agent:system-architect:main
+   * app-owner-<appId>        → agent:app-owner:<appId>
+   * anything else            → unchanged (e.g. legacy "main" sessions)
+   */
+  private toOpenClawKey(internalKey: string): string {
+    if (internalKey === 'system-architect') return 'agent:system-architect:main';
+    if (internalKey.startsWith('app-owner-')) {
+      const appId = internalKey.replace('app-owner-', '');
+      return `agent:app-owner:${appId}`;
+    }
+    return internalKey;
+  }
+
+  /**
+   * Convert an OpenClaw native session key back to the internal Gamma OS key.
+   * Applied immediately on inbound WS frames before any internal processing.
+   *
+   * agent:system-architect:main → system-architect
+   * agent:app-owner:<appId>     → app-owner-<appId>
+   * anything else               → unchanged
+   */
+  private toInternalKey(openClawKey: string): string {
+    if (openClawKey === 'agent:system-architect:main') return 'system-architect';
+    if (openClawKey.startsWith('agent:app-owner:')) {
+      const appId = openClawKey.replace('agent:app-owner:', '');
+      return `app-owner-${appId}`;
+    }
+    return openClawKey;
+  }
+
   // ── Hierarchy tracking for memory bus (spec §3.6) ──
   // Maps runId → { seq, lastThinkingStepId, toolCallStepIds }
   /** In-memory cumulative text tracker — avoids Redis race on rapid events */
@@ -324,13 +361,8 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
 
   /** Enqueue agent event processing — serialized per session to prevent race conditions */
   private enqueueAgentEvent(payload: GWAgentEventPayload): void {
-    // Normalize session key
-    let sessionKey = payload.sessionKey;
-    if (sessionKey.startsWith('agent:main:')) {
-      sessionKey = sessionKey.replace('agent:main:', '');
-    } else if (sessionKey.startsWith('agent:')) {
-      sessionKey = sessionKey.replace(/^agent:[^:]+:/, '');
-    }
+    // Translate inbound OpenClaw key back to internal Gamma OS key at the boundary
+    const sessionKey = this.toInternalKey(payload.sessionKey);
 
     const prev = this.eventQueue.get(sessionKey) ?? Promise.resolve();
     const next = prev.then(() => this.handleAgentEvent({ ...payload, sessionKey })).catch(
@@ -858,7 +890,7 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
       type: 'req',
       id: frameId,
       method: 'sessions.abort',
-      params: { sessionKey },
+      params: { sessionKey: this.toOpenClawKey(sessionKey) },
     });
     try {
       await this.waitForResponse(frameId, 2000);
@@ -883,7 +915,7 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
 
     const frameId = ulid();
     const params: Record<string, unknown> = {
-      sessionKey,
+      sessionKey: this.toOpenClawKey(sessionKey),
       ...(systemPrompt ? { systemPrompt } : {}),
       ...(agentId ? { agentId } : {}),
     };
@@ -948,13 +980,14 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
     }
 
     const frameId = ulid();
+    // inflightChatSend stores the internal key — used for error routing and token accumulation
     this.inflightChatSend.set(frameId, { windowId, sessionKey });
     this.logger.log(`sendMessage: ${sessionKey} → ${outgoingMessage.slice(0, 60)}... (frame=${frameId})`);
     this.send({
       type: 'req',
       id: frameId,
       method: 'chat.send',
-      params: { sessionKey, message: outgoingMessage, idempotencyKey: frameId },
+      params: { sessionKey: this.toOpenClawKey(sessionKey), message: outgoingMessage, idempotencyKey: frameId },
     });
     // 10s timeout: if no ack, clean up inflight (avoid leak). Error routing
     // only applies when we get res with ok:false; timeout is silent.
@@ -981,7 +1014,7 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
       type: 'req',
       id: frameId,
       method: 'session-usage',
-      params: { sessionKey },
+      params: { sessionKey: this.toOpenClawKey(sessionKey) },
     });
 
     try {
@@ -1048,7 +1081,7 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
       type: 'req',
       id: frameId,
       method: 'sessions.delete',
-      params: { sessionKey },
+      params: { sessionKey: this.toOpenClawKey(sessionKey) },
     });
     try {
       await this.waitForResponse(frameId, 2000);
