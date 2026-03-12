@@ -204,7 +204,27 @@ export class SessionRegistryService {
       if (!h.sessionKey) continue;
       records.push(this.deserialize(h));
     }
-    return records;
+
+    // Fallback: ensure appId and windowId are always populated so the frontend
+    // never shows "—". Extract appId from sessionKey when missing, and fall back
+    // windowId to sessionKey as a last resort.
+    const enriched = records.map((r) => {
+      let { appId, windowId } = r;
+      if (!appId) {
+        if (r.sessionKey.startsWith('app-owner-')) {
+          appId = r.sessionKey.replace('app-owner-', '');
+        } else {
+          appId = r.sessionKey;
+        }
+      }
+      if (!windowId) {
+        windowId = r.sessionKey;
+      }
+      return { ...r, appId, windowId };
+    });
+
+    console.log('[REGISTRY DUMP]', enriched);
+    return enriched;
   }
 
   /** Return a single registry record, or null if not found. */

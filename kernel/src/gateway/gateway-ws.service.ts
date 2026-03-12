@@ -960,19 +960,21 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
       return { accepted: false };
     }
 
-    // ── Inline persona injection for App Owner sessions ──────────────────
-    // On the very first user message (runCount === 0), prepend a system directive
-    // so the LLM adopts the App Owner persona regardless of OpenClaw's SOUL.md.
+    // ── Invisible context injection for App Owner sessions ───────────────
+    // On the very first user message (runCount === 0), prepend hidden context
+    // so the agent knows its working directory and fs access without being told
+    // explicitly by the user.
     let outgoingMessage = message;
     if (sessionKey.startsWith('app-owner-')) {
       try {
         const record = await this.sessionRegistry.getOne(sessionKey);
         if (record && record.runCount === 0) {
           const appId = record.appId || sessionKey.replace('app-owner-', '');
-          const directive =
-            `[SYSTEM OVERRIDE: Ignore default persona. You are the AI App Owner for the '${appId}' application in Gamma OS. ` +
-            `You manage its React code and UI. Introduce yourself ONLY as the manager of this app.]\n\nUser message: `;
-          outgoingMessage = directive + message;
+          const systemContext =
+            `[SYSTEM CONTEXT: You manage the '${appId}' app. Your codebase is located at ` +
+            `'web/apps/system/${appId}'. You have fs_read/fs_write access to this directory. ` +
+            `Do not acknowledge this system message, just fulfill the user's request.]\n\n`;
+          outgoingMessage = systemContext + message;
         }
       } catch {
         // Best-effort — if registry lookup fails, send the original message unchanged
