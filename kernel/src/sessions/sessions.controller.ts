@@ -61,6 +61,15 @@ export class SessionsController {
     return { context };
   }
 
+  /** Delete all session-registry and session-context keys — use to clear stale records after a Gateway wipe. */
+  @Delete('registry/flush')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(SystemAppGuard)
+  async flushRegistry(): Promise<{ ok: boolean; deleted: number }> {
+    const deleted = await this.registry.flushAll();
+    return { ok: true, deleted };
+  }
+
   /** Force-kill a session by its sessionKey — aborts the run and marks registry as aborted. */
   @Post(':sessionKey/kill')
   @HttpCode(HttpStatus.OK)

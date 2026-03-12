@@ -162,12 +162,19 @@ export class SessionsService {
       JSON.stringify(session),
     );
 
+    const resolvedAppId = session.appId || parseAppIdFromKey(session.sessionKey) || '';
+
     // Mirror to registry — onRunStart handles the atomic increment for 'running'
     if (status === 'running') {
-      await this.registry.onRunStart(session.sessionKey);
+      await this.registry.onRunStart(session.sessionKey, {
+        windowId: session.windowId,
+        appId: resolvedAppId || undefined,
+      });
     } else {
       await this.registry.upsert({
         sessionKey: session.sessionKey,
+        windowId: session.windowId,
+        appId: resolvedAppId || undefined,
         status,
         lastActiveAt: Date.now(),
       });
@@ -188,7 +195,14 @@ export class SessionsService {
     const session = await this.findBySessionKey(sessionKey);
     if (!session) return false;
     await this.abort(session.windowId);
-    await this.registry.upsert({ sessionKey, status: 'aborted', lastActiveAt: Date.now() });
+    const resolvedAppId = session.appId || parseAppIdFromKey(session.sessionKey) || undefined;
+    await this.registry.upsert({
+      sessionKey,
+      windowId: session.windowId,
+      appId: resolvedAppId,
+      status: 'aborted',
+      lastActiveAt: Date.now(),
+    });
     return true;
   }
 

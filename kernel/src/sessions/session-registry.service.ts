@@ -115,14 +115,18 @@ export class SessionRegistryService {
   /**
    * Atomically mark a run as started: set status=running, increment runCount,
    * update lastActiveAt — all in a single pipeline. Resets TTL.
+   * Optional identity fields (windowId, appId) are re-asserted when provided.
    */
-  async onRunStart(sessionKey: string): Promise<void> {
+  async onRunStart(
+    sessionKey: string,
+    identity?: { windowId?: string; appId?: string },
+  ): Promise<void> {
     const key = this.hashKey(sessionKey);
     const pipeline = this.redis.pipeline();
-    pipeline.hset(key,
-      'status',       'running',
-      'lastActiveAt', String(Date.now()),
-    );
+    const fields: string[] = ['status', 'running', 'lastActiveAt', String(Date.now())];
+    if (identity?.windowId) fields.push('windowId', identity.windowId);
+    if (identity?.appId) fields.push('appId', identity.appId);
+    pipeline.hset(key, ...fields);
     pipeline.hincrby(key, 'runCount', 1);
     pipeline.expire(key, TTL_SECONDS);
     await pipeline.exec();
@@ -162,6 +166,23 @@ export class SessionRegistryService {
   async remove(sessionKey: string): Promise<void> {
     await this.redis.del(this.hashKey(sessionKey), this.contextKey(sessionKey));
     this.broadcastUpdate();
+  }
+
+  /**
+   * Delete all session-registry and session-context keys from Redis.
+   * Returns the number of keys deleted. Broadcasts an empty registry update.
+   */
+  async flushAll(): Promise<number> {
+    const [registryKeys, contextKeys] = await Promise.all([
+      this.scanKeys(`${REDIS_KEYS.SESSION_REGISTRY_PREFIX}*`),
+      this.scanKeys(`${REDIS_KEYS.SESSION_CONTEXT_PREFIX}*`),
+    ]);
+    const allKeys = [...registryKeys, ...contextKeys];
+    if (allKeys.length > 0) {
+      await this.redis.del(...allKeys);
+    }
+    this.broadcastUpdate();
+    return allKeys.length;
   }
 
   /** Return all registry records (SCAN-based, safe for large keyspaces). */

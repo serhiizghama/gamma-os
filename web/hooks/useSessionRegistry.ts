@@ -10,6 +10,7 @@ export interface SessionRegistryState {
   records: SessionRecord[];
   loading: boolean;
   error: string | null;
+  refresh: () => void;
 }
 
 export function systemAuthHeaders(): Record<string, string> {
@@ -24,9 +25,10 @@ export function useSessionRegistry(): SessionRegistryState {
   const [records, setRecords] = useState<SessionRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
   const mountedRef = useRef(true);
 
-  // Initial REST fetch
+  // Initial REST fetch (re-runs on manual refresh)
   useEffect(() => {
     mountedRef.current = true;
 
@@ -53,7 +55,7 @@ export function useSessionRegistry(): SessionRegistryState {
     return () => {
       mountedRef.current = false;
     };
-  }, []);
+  }, [refreshTick]);
 
   // Live updates via SSE broadcast — agent-monitor is a stable dummy window ID
   // that receives broadcast events (session_registry_update) without any per-window traffic.
@@ -83,5 +85,5 @@ export function useSessionRegistry(): SessionRegistryState {
     };
   }, []);
 
-  return { records, loading, error };
+  return { records, loading, error, refresh: () => setRefreshTick((t) => t + 1) };
 }

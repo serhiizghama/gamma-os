@@ -261,9 +261,10 @@ function Inspector({ record, onKill, killing }: InspectorProps): React.ReactElem
 // ── Main component ────────────────────────────────────────────────────────
 
 export function AgentMonitorApp(): React.ReactElement {
-  const { records, loading, error } = useSessionRegistry();
+  const { records, loading, error, refresh } = useSessionRegistry();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [killing, setKilling] = useState(false);
+  const [flushing, setFlushing] = useState(false);
 
   const selectedRecord = records.find((r) => r.sessionKey === selectedKey) ?? null;
 
@@ -271,6 +272,27 @@ export function AgentMonitorApp(): React.ReactElement {
   if (selectedKey && !selectedRecord) {
     setSelectedKey(null);
   }
+
+  const handleFlush = useCallback(async () => {
+    if (!window.confirm("Clear all stale registry records?\n\nThis removes all session-registry and session-context entries from Redis.")) return;
+    setFlushing(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/sessions/registry/flush`, {
+        method: "DELETE",
+        headers: systemAuthHeaders(),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+        alert(`Flush failed: ${String(body["message"] ?? res.statusText)}`);
+      } else {
+        refresh();
+      }
+    } catch (err: unknown) {
+      alert(`Flush failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setFlushing(false);
+    }
+  }, [refresh]);
 
   const handleKill = useCallback(async (sessionKey: string) => {
     if (!window.confirm(`Kill session "${sessionKey}"?\n\nThis will abort any running agent task.`)) return;
@@ -282,6 +304,7 @@ export function AgentMonitorApp(): React.ReactElement {
         {
           method: "POST",
           headers: { ...systemAuthHeaders(), "Content-Type": "application/json" },
+          body: JSON.stringify({}),
         },
       );
       if (!res.ok) {
@@ -306,9 +329,19 @@ export function AgentMonitorApp(): React.ReactElement {
             Session Registry · Token Usage · Lifecycle Controls
           </div>
         </div>
-        <div style={{ fontSize: 11, opacity: 0.6 }}>
-          {loading ? "syncing…" : `${records.length} session${records.length !== 1 ? "s" : ""}`}
-          {error && <span style={{ color: "var(--color-accent-error)", marginLeft: 8 }}>⚠ {error}</span>}
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: 11, opacity: 0.6 }}>
+            {loading ? "syncing…" : `${records.length} session${records.length !== 1 ? "s" : ""}`}
+            {error && <span style={{ color: "var(--color-accent-error)", marginLeft: 8 }}>⚠ {error}</span>}
+          </span>
+          <button
+            type="button"
+            style={BTN_GHOST}
+            disabled={flushing}
+            onClick={handleFlush}
+          >
+            {flushing ? "Clearing…" : "Clear Stale Records"}
+          </button>
         </div>
       </header>
 
