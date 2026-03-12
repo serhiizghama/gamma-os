@@ -4,7 +4,7 @@ import remarkGfm from "remark-gfm";
 import type { AgentStatus } from "@gamma/types";
 import { useThrottledValue } from "../hooks/useThrottledValue";
 
-// ── Types ────────────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────
 
 export interface ChatMessage {
   id: string;
@@ -29,39 +29,67 @@ interface MessageListProps {
   status: AgentStatus;
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────
 
 const MAX_TOOL_LEN = 64;
 
-/** Allow only safe image URLs: https, http, or data:image/* to prevent XSS. */
 function isAllowedImageSrc(src: string | undefined): boolean {
   if (!src || typeof src !== "string") return false;
   const s = src.trim().toLowerCase();
-  if (s.startsWith("https://") || s.startsWith("http://")) return true;
-  if (s.startsWith("data:image/")) return true;
-  return false;
+  return s.startsWith("https://") || s.startsWith("http://") || s.startsWith("data:image/");
 }
 
 function truncate(str: string, max = MAX_TOOL_LEN): string {
-  if (str.length <= max) return str;
-  return str.slice(0, max) + "… (truncated)";
+  return str.length <= max ? str : str.slice(0, max) + "… (truncated)";
 }
 
-// ── Thinking Block ───────────────────────────────────────────────────────
+// ── Avatar ────────────────────────────────────────────────────────────────
+
+function Avatar({ role }: { role: "user" | "assistant" }): React.ReactElement {
+  const isUser = role === "user";
+  return (
+    <div
+      style={{
+        width: 26,
+        height: 26,
+        borderRadius: "50%",
+        flexShrink: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: isUser ? 11 : 12,
+        fontWeight: 700,
+        marginTop: 2,
+        background: isUser
+          ? "linear-gradient(135deg, #2563eb 0%, #3b82f6 100%)"
+          : "rgba(59,130,246,0.12)",
+        border: isUser
+          ? "none"
+          : "1px solid rgba(59,130,246,0.25)",
+        color: isUser ? "#fff" : "rgba(96,165,250,0.9)",
+        userSelect: "none",
+        letterSpacing: isUser ? 0 : "0.02em",
+      }}
+    >
+      {isUser ? "U" : "γ"}
+    </div>
+  );
+}
+
+// ── Thinking Block ────────────────────────────────────────────────────────
 
 function ThinkingBlock({ text }: { text: string }): React.ReactElement {
   const [open, setOpen] = useState(false);
-
   return (
     <details
       open={open}
       onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
       style={{
-        marginBottom: 6,
+        marginBottom: 8,
         padding: "6px 10px",
-        background: "var(--color-bg-primary)",
+        background: "rgba(0,0,0,0.25)",
         borderRadius: 6,
-        border: "1px solid var(--color-border-subtle)",
+        border: "1px solid rgba(255,255,255,0.06)",
         fontSize: 12,
         color: "var(--color-text-secondary)",
       }}
@@ -73,9 +101,14 @@ function ThinkingBlock({ text }: { text: string }): React.ReactElement {
           fontFamily: "'SF Mono', 'Fira Code', monospace",
           fontSize: 11,
           color: "var(--color-text-secondary)",
+          listStyle: "none",
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
         }}
       >
-        💭 Thinking
+        <span style={{ opacity: 0.7 }}>💭</span>
+        <span>Thinking</span>
       </summary>
       <pre
         style={{
@@ -95,7 +128,7 @@ function ThinkingBlock({ text }: { text: string }): React.ReactElement {
   );
 }
 
-// ── Secure Markdown Image ──────────────────────────────────────────
+// ── Safe Image ────────────────────────────────────────────────────────────
 
 function SafeMarkdownImage({
   src,
@@ -114,7 +147,7 @@ function SafeMarkdownImage({
   );
 }
 
-// ── Code Block with Copy ──────────────────────────────────────────
+// ── Code Block ────────────────────────────────────────────────────────────
 
 function CodeBlockWithCopy({
   children,
@@ -123,35 +156,27 @@ function CodeBlockWithCopy({
   const [copied, setCopied] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const handleCopy = async (): Promise<void> => {
+  const handleCopy = async () => {
     const codeEl = containerRef.current?.querySelector("code");
     const text = codeEl?.textContent?.trim() ?? "";
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Fallback for older browsers or non-HTTPS
-      try {
-        const textarea = document.createElement("textarea");
-        textarea.value = text;
-        textarea.style.position = "fixed";
-        textarea.style.opacity = "0";
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand("copy");
-        document.body.removeChild(textarea);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      } catch {
-        /* ignore */
-      }
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.cssText = "position:fixed;opacity:0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
     }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const isBlockCode = React.Children.toArray(children).some(
-    (child) => typeof child === "object" && child !== null && (child as React.ReactElement).type === "code",
+    (c) => typeof c === "object" && c !== null && (c as React.ReactElement).type === "code",
   );
 
   return (
@@ -161,14 +186,10 @@ function CodeBlockWithCopy({
           type="button"
           className="agent-chat-code-copy"
           onClick={handleCopy}
-          aria-label={copied ? "Copied" : "Copy to clipboard"}
+          aria-label={copied ? "Copied" : "Copy"}
           title={copied ? "Copied!" : "Copy"}
         >
-          {copied ? (
-            <span className="agent-chat-code-copy-icon" aria-hidden>✓</span>
-          ) : (
-            <span className="agent-chat-code-copy-icon" aria-hidden>⎘</span>
-          )}
+          {copied ? "✓" : "⎘"}
         </button>
       )}
       <pre {...preProps}>{children}</pre>
@@ -176,13 +197,9 @@ function CodeBlockWithCopy({
   );
 }
 
-// ── Tool Call Render ─────────────────────────────────────────────────────
+// ── Tool Call Line ────────────────────────────────────────────────────────
 
-function ToolCallLine({
-  entry,
-}: {
-  entry: ToolCallEntry;
-}): React.ReactElement {
+function ToolCallLine({ entry }: { entry: ToolCallEntry }): React.ReactElement {
   if (entry.result !== undefined) {
     const icon = entry.isError ? "❌" : "✅";
     return (
@@ -212,7 +229,29 @@ function ToolCallLine({
   );
 }
 
-// ── Message Bubble ───────────────────────────────────────────────────────
+// ── Typing indicator ──────────────────────────────────────────────────────
+
+function TypingDots(): React.ReactElement {
+  return (
+    <div style={{ display: "flex", gap: 4, alignItems: "center", height: 18, padding: "0 4px" }}>
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          style={{
+            width: 5,
+            height: 5,
+            borderRadius: "50%",
+            background: "rgba(96,165,250,0.7)",
+            display: "inline-block",
+            animation: `typingBounce 1.2s ease-in-out ${i * 0.2}s infinite`,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ── Message Bubble ────────────────────────────────────────────────────────
 
 function MessageBubble({
   msg,
@@ -226,75 +265,142 @@ function MessageBubble({
 }): React.ReactElement {
   const isUser = msg.role === "user";
 
-  // Throttle assistant markdown text while streaming to cap AST recalculation.
   const throttledText = useThrottledValue(msg.text, 500, status);
   const displayText = isStreaming ? throttledText : msg.text;
+
+  const timeStr = new Date(msg.ts).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 
   return (
     <div
       style={{
         display: "flex",
-        justifyContent: isUser ? "flex-end" : "flex-start",
-        marginBottom: "var(--space-3)",
+        flexDirection: isUser ? "row-reverse" : "row",
+        alignItems: "flex-start",
+        gap: 8,
+        marginBottom: 14,
       }}
     >
+      <Avatar role={msg.role} />
+
       <div
-        className="agent-chat-bubble"
         style={{
-          maxWidth: "85%",
-          padding: "var(--space-2) var(--space-3)",
-          borderRadius: isUser ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
-          background: isUser ? "var(--color-accent-primary)" : "var(--color-bg-secondary)",
-          color: isUser ? "var(--color-text-inverse)" : "var(--color-text-primary)",
-          boxShadow: isUser ? "var(--shadow-panel-subtle)" : "var(--shadow-bubble-assistant)",
-          border: isUser ? "none" : "1px solid var(--color-surface-muted)",
-          fontFamily: "var(--font-system)",
-          fontSize: 13,
-          lineHeight: 1.6,
-          wordBreak: "break-word",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: isUser ? "flex-end" : "flex-start",
+          maxWidth: "82%",
+          gap: 3,
         }}
       >
-        {msg.thinking && <ThinkingBlock text={msg.thinking} />}
-
-        {msg.toolCalls?.map((tc, i) => (
-          <ToolCallLine key={`${msg.id}-tool-${i}`} entry={tc} />
-        ))}
-
-        {isUser ? (
-          <span>{msg.text}</span>
-        ) : (
-          <div className="agent-chat-markdown">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                pre: CodeBlockWithCopy,
-                img: SafeMarkdownImage,
-              }}
-            >
-              {displayText}
-            </ReactMarkdown>
-          </div>
-        )}
-
+        {/* Bubble */}
         <div
+          className="agent-chat-bubble"
           style={{
-            textAlign: "right",
-            fontSize: 10,
-            marginTop: 4,
-            color: isUser ? "var(--color-text-on-muted)" : "var(--color-text-secondary)",
+            padding: "9px 13px",
+            borderRadius: isUser ? "16px 4px 16px 16px" : "4px 16px 16px 16px",
+            ...(isUser
+              ? {
+                  background: "linear-gradient(135deg, #2563eb 0%, #3b82f6 100%)",
+                  color: "#ffffff",
+                  boxShadow: "0 2px 12px rgba(37,99,235,0.35), 0 1px 3px rgba(0,0,0,0.3)",
+                  border: "none",
+                }
+              : {
+                  background: "rgba(10, 16, 34, 0.82)",
+                  color: "var(--color-text-primary)",
+                  border: "1px solid rgba(59,130,246,0.14)",
+                  boxShadow:
+                    "0 2px 16px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.04)",
+                  borderLeft: "2px solid rgba(59,130,246,0.35)",
+                }),
+            fontFamily: "var(--font-system)",
+            fontSize: 13,
+            lineHeight: 1.65,
+            wordBreak: "break-word",
           }}
         >
-          {new Date(msg.ts).toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-          })}
+          {msg.thinking && <ThinkingBlock text={msg.thinking} />}
+          {msg.toolCalls?.map((tc, i) => (
+            <ToolCallLine key={`${msg.id}-tool-${i}`} entry={tc} />
+          ))}
+
+          {isUser ? (
+            <span style={{ userSelect: "text" }}>{msg.text}</span>
+          ) : (
+            <div className="agent-chat-markdown">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{ pre: CodeBlockWithCopy, img: SafeMarkdownImage }}
+              >
+                {displayText}
+              </ReactMarkdown>
+              {isStreaming && !displayText && <TypingDots />}
+            </div>
+          )}
         </div>
+
+        {/* Timestamp */}
+        <span
+          style={{
+            fontSize: 10,
+            color: "rgba(148,163,184,0.45)",
+            letterSpacing: "0.02em",
+            paddingLeft: isUser ? 0 : 4,
+            paddingRight: isUser ? 4 : 0,
+          }}
+        >
+          {timeStr}
+        </span>
       </div>
     </div>
   );
 }
 
-// ── MessageList ──────────────────────────────────────────────────────────
+// ── Pending tool lines (live stream) ─────────────────────────────────────
+
+function PendingTools({ lines }: { lines: string[] }): React.ReactElement {
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 8,
+        alignItems: "flex-start",
+        marginBottom: 14,
+      }}
+    >
+      <Avatar role="assistant" />
+      <div
+        style={{
+          padding: "9px 13px",
+          background: "rgba(10,16,34,0.82)",
+          border: "1px solid rgba(59,130,246,0.14)",
+          borderLeft: "2px solid rgba(59,130,246,0.35)",
+          borderRadius: "4px 16px 16px 16px",
+          boxShadow: "0 2px 16px rgba(0,0,0,0.45)",
+        }}
+      >
+        {lines.map((line, i) => (
+          <div
+            key={i}
+            style={{
+              fontFamily: "'SF Mono', 'Fira Code', monospace",
+              fontSize: 11,
+              color: "var(--color-accent-primary)",
+              padding: "1px 0",
+            }}
+          >
+            {line}
+          </div>
+        ))}
+        <TypingDots />
+      </div>
+    </div>
+  );
+}
+
+// ── MessageList ───────────────────────────────────────────────────────────
 
 export function MessageList({
   messages,
@@ -314,64 +420,96 @@ export function MessageList({
   }, [messages, pendingToolLines]);
 
   return (
-    <div
-      className="agent-chat-message-list"
-      style={{
-        flex: 1,
-        minHeight: 0,
-        overflowY: "auto",
-        overflowX: "hidden",
-        padding: "var(--space-3) var(--space-4)",
-        display: "flex",
-        flexDirection: "column",
-        color: "var(--color-text-primary)",
-      }}
-    >
-      {messages.map((msg, index) => {
-        const isStreaming =
-          status === "running" &&
-          msg.role === "assistant" &&
-          index === lastAssistantIndex &&
-          index === messages.length - 1;
+    <>
+      {/* Keyframes injected once */}
+      <style>{`
+        @keyframes typingBounce {
+          0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+          30% { transform: translateY(-5px); opacity: 1; }
+        }
+      `}</style>
 
-        return (
-          <MessageBubble
-            key={msg.id}
-            msg={msg}
-            accentColor={accentColor}
-            status={status}
-            isStreaming={isStreaming}
-          />
-        );
-      })}
+      <div
+        className="agent-chat-message-list"
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: "auto",
+          overflowX: "hidden",
+          padding: "16px 14px",
+          display: "flex",
+          flexDirection: "column",
+          color: "var(--color-text-primary)",
+          // Darker than the wrapper — creates clear depth hierarchy
+          background: "#07101e",
+          // Subtle dot texture
+          backgroundImage: `
+            radial-gradient(circle, rgba(59,130,246,0.08) 1px, transparent 1px),
+            url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160"><text x="50%25" y="50%25" font-family="system-ui" font-weight="800" font-size="14" fill="rgba(59,130,246,0.03)" transform="rotate(-38 80 80)" text-anchor="middle" letter-spacing="3">GAMMA OS</text></svg>')
+          `,
+          backgroundSize: "28px 28px, 160px 160px",
+        }}
+      >
+        {messages.length === 0 && (
+          <div
+            style={{
+              flex: 1,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 10,
+              opacity: 0.35,
+              pointerEvents: "none",
+            }}
+          >
+            <svg viewBox="0 0 80 100" style={{ width: 36, height: "auto" }}>
+              {([
+                [[14,8],[24,22],[34,36],[40,48]],
+                [[66,8],[56,22],[46,36],[40,48]],
+                [[40,48],[40,66],[40,88]],
+              ] as number[][][]).map((arm, ai) =>
+                arm.slice(0,-1).map((pt,i) => (
+                  <line key={`${ai}-${i}`}
+                    x1={pt[0]} y1={pt[1]}
+                    x2={arm[i+1][0]} y2={arm[i+1][1]}
+                    stroke="rgba(96,165,250,0.6)" strokeWidth="1.4"/>
+                ))
+              )}
+              {([[40,48,2.5]] as [number,number,number][]).map(([cx,cy,r],i) => (
+                <circle key={i} cx={cx} cy={cy} r={r} fill="rgba(96,165,250,0.7)"/>
+              ))}
+            </svg>
+            <span style={{ fontSize: 12, fontFamily: "var(--font-system)", color: "var(--color-text-secondary)", letterSpacing: "0.04em" }}>
+              System Architect ready
+            </span>
+          </div>
+        )}
 
-      {pendingToolLines.length > 0 && (
-        <div
-          style={{
-            padding: "var(--space-2) var(--space-3)",
-            background: "var(--color-bg-primary)",
-            borderRadius: 6,
-            border: "1px solid var(--color-border-subtle)",
-            marginBottom: "var(--space-2)",
-          }}
-        >
-          {pendingToolLines.map((line, i) => (
-            <div
-              key={i}
-              style={{
-                fontFamily: "'SF Mono', 'Fira Code', monospace",
-                fontSize: 11,
-                color: "var(--color-accent-primary)",
-                padding: "1px 0",
-              }}
-            >
-              {line}
-            </div>
-          ))}
-        </div>
-      )}
+        {messages.map((msg, index) => {
+          const isStreaming =
+            status === "running" &&
+            msg.role === "assistant" &&
+            index === lastAssistantIndex &&
+            index === messages.length - 1;
 
-      <div ref={bottomRef} />
-    </div>
+          return (
+            <MessageBubble
+              key={msg.id}
+              msg={msg}
+              accentColor={accentColor}
+              status={status}
+              isStreaming={isStreaming}
+            />
+          );
+        })}
+
+        {pendingToolLines.length > 0 && (
+          <PendingTools lines={pendingToolLines} />
+        )}
+
+        <div ref={bottomRef} />
+      </div>
+    </>
   );
 }
