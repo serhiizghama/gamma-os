@@ -89,7 +89,7 @@ function AppPlaceholder({ label }: { label: string }): React.ReactElement {
 const MIN_W = 320;
 const MIN_H = 200;
 const AGENT_PANEL_MIN = 0.2;
-const AGENT_PANEL_MAX = 0.6;
+const AGENT_PANEL_MAX = 0.9;
 const AGENT_PANEL_DEFAULT = 0.4;
 
 interface WindowNodeProps {
