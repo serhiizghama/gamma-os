@@ -5,11 +5,11 @@ export interface AppDefinition {
 }
 
 export const INSTALLED_APPS: AppDefinition[] = [
-  { id: "browser",  name: "Browser",  icon: "🌐" },
-  { id: "terminal", name: "Terminal", icon: "⌨️" },
-  { id: "settings", name: "Settings", icon: "⚙️" },
-  { id: "notes",    name: "Notes",    icon: "📝" },
-  { id: "agent-monitor", name: "Agent Monitor", icon: "📡" },
-  { id: "calculator",     name: "Calculator",     icon: "🧮" },
-  { id: "crypto-tracker",    name: "Crypto Tracker",    icon: "₿"  },
+  { id: "browser",       name: "Browser",       icon: "🌐" },
+  { id: "terminal",      name: "Terminal",       icon: "⌨️" },
+  { id: "settings",      name: "Settings",       icon: "⚙️" },
+  { id: "notes",         name: "Notes",          icon: "📝" },
+  { id: "agent-monitor", name: "Agent Monitor",  icon: "📡" },
+  { id: "calculator",    name: "Calculator",     icon: "🧮" },
+  { id: "crypto-tracker",name: "Crypto Tracker", icon: "₿"  },
 ];

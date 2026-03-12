@@ -358,8 +358,6 @@ export function AgentMonitorApp(): React.ReactElement {
                   <th style={TH}>App</th>
                   <th style={TH}>Status</th>
                   <th style={TH}>Runs</th>
-                  <th style={{ ...TH, textAlign: "right" }}>In Tok</th>
-                  <th style={{ ...TH, textAlign: "right" }}>Out Tok</th>
                   <th style={TH}>Last Active</th>
                 </tr>
               </thead>
@@ -386,19 +384,13 @@ export function AgentMonitorApp(): React.ReactElement {
                         </span>
                       </td>
                       <td style={{ ...TD, textAlign: "right" }}>{r.runCount}</td>
-                      <td style={{ ...TD, textAlign: "right" }}>
-                        {fmtTokens(r.tokenUsage.inputTokens)}
-                      </td>
-                      <td style={{ ...TD, textAlign: "right" }}>
-                        {fmtTokens(r.tokenUsage.outputTokens)}
-                      </td>
                       <td style={TD}>{fmtTime(r.lastActiveAt)}</td>
                     </tr>
                   );
                 })}
                 {records.length === 0 && !loading && (
                   <tr>
-                    <td style={{ ...TD, opacity: 0.5 }} colSpan={7}>
+                    <td style={{ ...TD, opacity: 0.5 }} colSpan={5}>
                       No active sessions. Launch an app-owner window to see data.
                     </td>
                   </tr>
