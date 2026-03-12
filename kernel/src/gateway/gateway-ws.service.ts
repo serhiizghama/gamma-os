@@ -920,19 +920,39 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
   // Fire-and-forget: returns immediately after dispatch. Ack/errors are routed
   // asynchronously via handleFrame → pushChatSendError for rejections.
 
-  sendMessage(sessionKey: string, message: string, windowId: string): { accepted: boolean } {
+  async sendMessage(sessionKey: string, message: string, windowId: string): Promise<{ accepted: boolean }> {
     if (!this.connected) {
       this.logger.warn(`sendMessage: not connected, dropping message for ${sessionKey}`);
       return { accepted: false };
     }
+
+    // ── Inline persona injection for App Owner sessions ──────────────────
+    // On the very first user message (runCount === 0), prepend a system directive
+    // so the LLM adopts the App Owner persona regardless of OpenClaw's SOUL.md.
+    let outgoingMessage = message;
+    if (sessionKey.startsWith('app-owner-')) {
+      try {
+        const record = await this.sessionRegistry.getOne(sessionKey);
+        if (record && record.runCount === 0) {
+          const appId = record.appId || sessionKey.replace('app-owner-', '');
+          const directive =
+            `[SYSTEM OVERRIDE: Ignore default persona. You are the AI App Owner for the '${appId}' application in Gamma OS. ` +
+            `You manage its React code and UI. Introduce yourself ONLY as the manager of this app.]\n\nUser message: `;
+          outgoingMessage = directive + message;
+        }
+      } catch {
+        // Best-effort — if registry lookup fails, send the original message unchanged
+      }
+    }
+
     const frameId = ulid();
     this.inflightChatSend.set(frameId, { windowId, sessionKey });
-    this.logger.log(`sendMessage: ${sessionKey} → ${message.slice(0, 60)}... (frame=${frameId})`);
+    this.logger.log(`sendMessage: ${sessionKey} → ${outgoingMessage.slice(0, 60)}... (frame=${frameId})`);
     this.send({
       type: 'req',
       id: frameId,
       method: 'chat.send',
-      params: { sessionKey, message, idempotencyKey: frameId },
+      params: { sessionKey, message: outgoingMessage, idempotencyKey: frameId },
     });
     // 10s timeout: if no ack, clean up inflight (avoid leak). Error routing
     // only applies when we get res with ok:false; timeout is silent.

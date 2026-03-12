@@ -306,7 +306,7 @@ export class SessionsService {
 
     // 3. Forward to OpenClaw Gateway (fire-and-forget dispatch)
     try {
-      const { accepted } = this.gatewayWs.sendMessage(
+      const { accepted } = await this.gatewayWs.sendMessage(
         session.sessionKey,
         message,
         windowId,
