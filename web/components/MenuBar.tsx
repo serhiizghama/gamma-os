@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useOSStore } from "../store/useOSStore";
+import { AboutModal } from "./AboutModal";
 import type { WindowNode } from "@gamma/types";
 
 export const MENU_HEIGHT = 32;
@@ -339,6 +340,8 @@ export function MenuBar({
     Object.values(s.windows).filter((w) => w.isMinimized)
   );
 
+  const [aboutOpen, setAboutOpen] = useState(false);
+
   return (
     <div
       className="desktop-shell__taskbar"
@@ -365,33 +368,52 @@ export function MenuBar({
     >
       {/* ── Left: Brand + minimized window chips ────────────── */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-        {/* Gamma γ glyph */}
-        <svg
-          viewBox="0 0 20 24"
-          width="14"
-          height="16"
-          style={{ opacity: 0.75, flexShrink: 0 }}
-          aria-hidden
-        >
-          <path
-            d="M2 3 L10 13 L10 22 M18 3 L10 13"
-            stroke="var(--color-accent-primary)"
-            strokeWidth="2.2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            fill="none"
-          />
-        </svg>
-        <span
+        {/* Gamma γ glyph + name — clickable "About" trigger */}
+        <button
+          onClick={() => setAboutOpen(true)}
+          title="About Gamma OS"
           style={{
-            fontSize: 13,
-            fontWeight: 600,
-            color: "var(--color-text-primary)",
-            letterSpacing: "0.12em",
+            display: "flex",
+            alignItems: "center",
+            gap: 7,
+            background: "transparent",
+            border: "none",
+            cursor: "pointer",
+            padding: "3px 6px",
+            borderRadius: 6,
+            transition: "background 140ms ease",
           }}
+          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.08)"; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
         >
-          Gamma OS
-        </span>
+          <svg
+            viewBox="0 0 20 24"
+            width="14"
+            height="16"
+            style={{ opacity: 0.85, flexShrink: 0 }}
+            aria-hidden
+          >
+            <path
+              d="M2 3 L10 13 L10 22 M18 3 L10 13"
+              stroke="var(--color-accent-primary)"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              fill="none"
+            />
+          </svg>
+          <span
+            style={{
+              fontSize: 13,
+              fontWeight: 600,
+              color: "var(--color-text-primary)",
+              letterSpacing: "0.12em",
+              fontFamily: "var(--font-system)",
+            }}
+          >
+            Gamma OS
+          </span>
+        </button>
       </div>
 
       {/* ── Minimized window chips ───────────────────────────── */}
@@ -451,5 +473,8 @@ export function MenuBar({
         </TrayButton>
       </div>
     </div>
+
+    {/* About Gamma OS modal */}
+    {aboutOpen && <AboutModal onClose={() => setAboutOpen(false)} />}
   );
 }
