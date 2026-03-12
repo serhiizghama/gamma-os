@@ -20,6 +20,14 @@ const APP_OWNER_PREFIX = 'app-owner-';
 const APP_OWNER_INIT_FIELD = 'appOwnerInitialized';
 
 /**
+ * Explicit identity overrides for well-known global sessions that are not
+ * created via the app-owner flow and therefore lack appId/windowId in the DTO.
+ */
+const GLOBAL_SESSION_IDENTITY: Record<string, { appId: string; windowId: string }> = {
+  'system-architect': { appId: 'system-architect', windowId: 'system-architect-window' },
+};
+
+/**
  * Parse appId from an app-owner session key.
  * "app-owner-notes" → "notes", "app-owner-" → null.
  * Any segment after a colon (e.g. "app-owner-notes:v2") is stripped.
@@ -75,10 +83,12 @@ export class SessionsService {
     // Robust appId resolution: DTO field is canonical, but fall back to parsing
     // from sessionKey so "app-owner-notes" always yields appId="notes" even if
     // the client omits or sends an empty appId.
-    const appId = dto.appId || parseAppIdFromKey(dto.sessionKey) || '';
+    const globalIdentity = GLOBAL_SESSION_IDENTITY[dto.sessionKey];
+    const appId = dto.appId || parseAppIdFromKey(dto.sessionKey) || globalIdentity?.appId || '';
+    const windowId = dto.windowId || globalIdentity?.windowId || dto.windowId;
 
     const session: WindowSession = {
-      windowId: dto.windowId,
+      windowId,
       appId,
       sessionKey: dto.sessionKey,
       agentId: dto.agentId,
@@ -86,12 +96,12 @@ export class SessionsService {
       status: 'idle',
     };
 
-    await this.redis.hset(REDIS_KEYS.SESSIONS, dto.windowId, JSON.stringify(session));
+    await this.redis.hset(REDIS_KEYS.SESSIONS, windowId, JSON.stringify(session));
 
     // Register initial telemetry entry in the session registry
     await this.registry.upsert({
       sessionKey: dto.sessionKey,
-      windowId: dto.windowId,
+      windowId,
       appId,
       status: 'idle',
       createdAt: session.createdAt,
@@ -108,11 +118,11 @@ export class SessionsService {
     });
 
     // Keep Gateway's in-memory mapping in sync so events can be routed
-    this.gatewayWs.registerWindowSession(dto.sessionKey, dto.windowId);
+    this.gatewayWs.registerWindowSession(dto.sessionKey, windowId);
 
     // Initialize App Owner sessions with a dedicated system prompt + source context.
     if (dto.sessionKey?.startsWith(APP_OWNER_PREFIX)) {
-      this.initializeAppOwnerSession(dto.sessionKey, dto.windowId, appId).catch(
+      this.initializeAppOwnerSession(dto.sessionKey, windowId, appId).catch(
         (err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
           this.logger.error(
@@ -162,18 +172,20 @@ export class SessionsService {
       JSON.stringify(session),
     );
 
-    const resolvedAppId = session.appId || parseAppIdFromKey(session.sessionKey) || '';
+    const globalIdentity = GLOBAL_SESSION_IDENTITY[session.sessionKey];
+    const resolvedAppId = session.appId || parseAppIdFromKey(session.sessionKey) || globalIdentity?.appId || '';
+    const resolvedWindowId = session.windowId || globalIdentity?.windowId || session.windowId;
 
     // Mirror to registry — onRunStart handles the atomic increment for 'running'
     if (status === 'running') {
       await this.registry.onRunStart(session.sessionKey, {
-        windowId: session.windowId,
+        windowId: resolvedWindowId,
         appId: resolvedAppId || undefined,
       });
     } else {
       await this.registry.upsert({
         sessionKey: session.sessionKey,
-        windowId: session.windowId,
+        windowId: resolvedWindowId,
         appId: resolvedAppId || undefined,
         status,
         lastActiveAt: Date.now(),
