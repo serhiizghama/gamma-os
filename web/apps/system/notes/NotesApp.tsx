@@ -213,12 +213,12 @@ export function NotesApp(): React.ReactElement {
                 onClick={() => deleteNote(activeNote.id)}
                 style={{
                   borderRadius: 999,
-                  border: "1px solid var(--button-danger-border)",
+                  border: "1px solid var(--button-secondary-border)",
                   padding: "6px 10px",
                   fontSize: 11,
                   cursor: "pointer",
-                  background: "var(--button-danger-bg)",
-                  color: "var(--button-danger-fg)",
+                  background: "var(--button-secondary-bg)",
+                  color: "var(--button-secondary-fg)",
                 }}
               >
                 Delete

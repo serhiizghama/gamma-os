@@ -1,0 +1,102 @@
+
+  VITE v5.4.21  ready in 89 ms
+
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: http://192.168.1.26:5173/
+  ➜  Network: http://100.123.78.76:5173/
+1:09:05 AM [vite] hmr update /components/Launchpad.tsx, /components/ToastNotification.tsx
+1:09:31 AM [vite] hmr update /apps/system/notes/NotesApp.tsx
+1:11:53 AM [vite] hmr update /apps/system/agent-monitor/AgentMonitorApp.tsx
+1:11:57 AM [vite] hmr update /apps/system/agent-monitor/AgentMonitorApp.tsx
+1:12:06 AM [vite] hmr update /apps/system/agent-monitor/AgentMonitorApp.tsx
+1:13:38 AM [vite] hmr update /apps/generated/calculator/CalculatorApp.tsx
+1:13:44 AM [vite] hmr update /apps/generated/calculator/CalculatorApp.tsx
+1:15:52 AM [vite] hmr update /apps/system/agent-monitor/AgentMonitorApp.tsx
+1:15:52 AM [vite] hmr update /apps/system/notes/NotesApp.tsx
+1:15:52 AM [vite] hmr update /components/Launchpad.tsx, /components/ToastNotification.tsx
+1:15:52 AM [vite] hmr update /apps/generated/calculator/CalculatorApp.tsx
+1:15:52 AM [vite] hmr update /components/BootScreen.tsx
+1:15:52 AM [vite] hmr update /components/ChatInput.tsx
+1:15:52 AM [vite] hmr update /components/Desktop.tsx
+1:15:52 AM [vite] hmr update /components/Dock.tsx
+1:15:52 AM [vite] hmr update /components/MenuBar.tsx
+1:15:52 AM [vite] hmr update /components/MessageList.tsx
+1:15:52 AM [vite] hmr update /components/TitleBar.tsx
+1:15:52 AM [vite] hmr update /components/WindowNode.tsx
+1:15:52 AM [vite] hmr update /styles/os-theme.css
+1:15:53 AM [vite] Pre-transform error: Transform failed with 1 error:
+/Users/sputnik/.openclaw/agents/serhii/projects/gamma-os/web/constants/apps.ts:13:0: ERROR: Unexpected "<<"
+1:15:53 AM [vite] Pre-transform error: Transform failed with 1 error:
+/Users/sputnik/.openclaw/agents/serhii/projects/gamma-os/web/constants/apps.ts:13:0: ERROR: Unexpected "<<"
+1:15:53 AM [vite] hmr invalidate /apps/generated/calculator/CalculatorApp.tsx Could not Fast Refresh (export removed)
+1:15:53 AM [vite] page reload apps/generated/calculator/CalculatorApp.tsx
+1:15:54 AM [vite] Internal server error: Transform failed with 1 error:
+/Users/sputnik/.openclaw/agents/serhii/projects/gamma-os/web/constants/apps.ts:13:0: ERROR: Unexpected "<<"
+  Plugin: vite:esbuild
+  File: /Users/sputnik/.openclaw/agents/serhii/projects/gamma-os/web/constants/apps.ts:13:0
+  
+  Unexpected "<<"
+  11 |    { id: "notes",    name: "Notes",    icon: "📝" },
+  12 |    { id: "agent-monitor", name: "Agent Monitor", icon: "📡" },
+  13 |  <<<<<<< Updated upstream
+     |  ^
+  14 |    { id: "calculator",     name: "Calculator",     icon: "🧮" },
+  15 |    { id: "crypto-tracker",    name: "Crypto Tracker",    icon: "₿"  },
+  
+      at failureErrorWithLog (/Users/sputnik/.openclaw/agents/serhii/projects/gamma-os/web/node_modules/esbuild/lib/main.js:1472:15)
+      at /Users/sputnik/.openclaw/agents/serhii/projects/gamma-os/web/node_modules/esbuild/lib/main.js:755:50
+      at responseCallbacks.<computed> (/Users/sputnik/.openclaw/agents/serhii/projects/gamma-os/web/node_modules/esbuild/lib/main.js:622:9)
+      at handleIncomingPacket (/Users/sputnik/.openclaw/agents/serhii/projects/gamma-os/web/node_modules/esbuild/lib/main.js:677:12)
+      at Socket.readFromStdout (/Users/sputnik/.openclaw/agents/serhii/projects/gamma-os/web/node_modules/esbuild/lib/main.js:600:7)
+      at Socket.emit (node:events:519:28)
+      at addChunk (node:internal/streams/readable:561:12)
+      at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
+      at Readable.push (node:internal/streams/readable:392:5)
+      at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+1:15:57 AM [vite] Internal server error: Transform failed with 1 error:
+/Users/sputnik/.openclaw/agents/serhii/projects/gamma-os/web/constants/apps.ts:13:0: ERROR: Unexpected "<<"
+  Plugin: vite:esbuild
+  File: /Users/sputnik/.openclaw/agents/serhii/projects/gamma-os/web/constants/apps.ts:13:0
+  
+  Unexpected "<<"
+  11 |    { id: "notes",    name: "Notes",    icon: "📝" },
+  12 |    { id: "agent-monitor", name: "Agent Monitor", icon: "📡" },
+  13 |  <<<<<<< Updated upstream
+     |  ^
+  14 |    { id: "calculator",     name: "Calculator",     icon: "🧮" },
+  15 |    { id: "crypto-tracker",    name: "Crypto Tracker",    icon: "₿"  },
+  
+      at failureErrorWithLog (/Users/sputnik/.openclaw/agents/serhii/projects/gamma-os/web/node_modules/esbuild/lib/main.js:1472:15)
+      at /Users/sputnik/.openclaw/agents/serhii/projects/gamma-os/web/node_modules/esbuild/lib/main.js:755:50
+      at responseCallbacks.<computed> (/Users/sputnik/.openclaw/agents/serhii/projects/gamma-os/web/node_modules/esbuild/lib/main.js:622:9)
+      at handleIncomingPacket (/Users/sputnik/.openclaw/agents/serhii/projects/gamma-os/web/node_modules/esbuild/lib/main.js:677:12)
+      at Socket.readFromStdout (/Users/sputnik/.openclaw/agents/serhii/projects/gamma-os/web/node_modules/esbuild/lib/main.js:600:7)
+      at Socket.emit (node:events:519:28)
+      at addChunk (node:internal/streams/readable:561:12)
+      at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
+      at Readable.push (node:internal/streams/readable:392:5)
+      at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+1:15:59 AM [vite] Internal server error: Transform failed with 1 error:
+/Users/sputnik/.openclaw/agents/serhii/projects/gamma-os/web/constants/apps.ts:13:0: ERROR: Unexpected "<<"
+  Plugin: vite:esbuild
+  File: /Users/sputnik/.openclaw/agents/serhii/projects/gamma-os/web/constants/apps.ts:13:0
+  
+  Unexpected "<<"
+  11 |    { id: "notes",    name: "Notes",    icon: "📝" },
+  12 |    { id: "agent-monitor", name: "Agent Monitor", icon: "📡" },
+  13 |  <<<<<<< Updated upstream
+     |  ^
+  14 |    { id: "calculator",     name: "Calculator",     icon: "🧮" },
+  15 |    { id: "crypto-tracker",    name: "Crypto Tracker",    icon: "₿"  },
+  
+      at failureErrorWithLog (/Users/sputnik/.openclaw/agents/serhii/projects/gamma-os/web/node_modules/esbuild/lib/main.js:1472:15)
+      at /Users/sputnik/.openclaw/agents/serhii/projects/gamma-os/web/node_modules/esbuild/lib/main.js:755:50
+      at responseCallbacks.<computed> (/Users/sputnik/.openclaw/agents/serhii/projects/gamma-os/web/node_modules/esbuild/lib/main.js:622:9)
+      at handleIncomingPacket (/Users/sputnik/.openclaw/agents/serhii/projects/gamma-os/web/node_modules/esbuild/lib/main.js:677:12)
+      at Socket.readFromStdout (/Users/sputnik/.openclaw/agents/serhii/projects/gamma-os/web/node_modules/esbuild/lib/main.js:600:7)
+      at Socket.emit (node:events:519:28)
+      at addChunk (node:internal/streams/readable:561:12)
+      at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
+      at Readable.push (node:internal/streams/readable:392:5)
+      at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+1:16:00 AM [vite] hmr update /components/Launchpad.tsx, /components/ToastNotification.tsx
