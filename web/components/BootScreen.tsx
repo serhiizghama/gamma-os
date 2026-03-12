@@ -214,7 +214,7 @@ function GlitchLogo({ progress }: { progress: number }): React.ReactElement {
       <span style={{
         ...base,
         position: "relative",
-        background: progress > 0.9
+        backgroundImage: progress > 0.9
           ? "linear-gradient(90deg, #60a5fa, #00e5ff, #a78bfa, #60a5fa)"
           : "linear-gradient(90deg, #3b82f6, #00c4ff)",
         backgroundSize: "200% 100%",

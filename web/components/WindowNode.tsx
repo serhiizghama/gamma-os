@@ -2,6 +2,7 @@ import React, {
   useRef,
   useCallback,
   useEffect,
+  useLayoutEffect,
   Suspense,
   useState,
 } from "react";
@@ -113,6 +114,74 @@ export function WindowNode({ id }: WindowNodeProps): React.ReactElement | null {
 
   // Outer shell ref — only position/size CSS vars live here
   const shellRef = useRef<HTMLDivElement>(null);
+
+  // ─── Minimize / Restore animation ────────────────────────────────────────
+  type AnimPhase = "idle" | "minimizing" | "restoring";
+  const [animPhase, setAnimPhase] = useState<AnimPhase>("idle");
+  const prevMinimizedRef = useRef(win?.isMinimized ?? false);
+  const minimizeWindow = useOSStore((s) => s.minimizeWindow);
+
+  /** Compute (tx, ty) so the window flies toward its MenuBar chip (top bar).
+   *  The chip element has id="dock-btn-{id}" and lives in MenuBar.
+   *  If the chip isn't in the DOM yet (first minimize), fall back to top-left
+   *  of the MenuBar (where the chip will appear). */
+  const computeMinimizeTxTy = useCallback((): { tx: number; ty: number } => {
+    if (!win) return { tx: 0, ty: -200 };
+    const winCenterX = win.coordinates.x + win.dimensions.width / 2;
+    const winCenterY = win.coordinates.y + win.dimensions.height / 2;
+
+    // The MenuBar chip — exists during restore; may not exist yet during minimize
+    const chip = document.getElementById(`dock-btn-${id}`);
+    if (chip) {
+      const r = chip.getBoundingClientRect();
+      return {
+        tx: r.left + r.width / 2 - winCenterX,
+        ty: r.top  + r.height / 2 - winCenterY,
+      };
+    }
+
+    // Fallback for first-minimize (chip not rendered yet):
+    // target the brand area at top-left of MenuBar (x=80, y=16)
+    return {
+      tx: 80 - winCenterX,
+      ty: 16 - winCenterY,
+    };
+  }, [id, win]);
+
+  /** Called by TitleBar — plays minimize animation then marks minimized in store */
+  const handleMinimize = useCallback(() => {
+    if (!shellRef.current || !win) return;
+    const { tx, ty } = computeMinimizeTxTy();
+    shellRef.current.style.setProperty("--minimize-tx", `${tx}px`);
+    shellRef.current.style.setProperty("--minimize-ty", `${ty}px`);
+    setAnimPhase("minimizing");
+    // After animation completes → commit to store (visibility: hidden)
+    const t = setTimeout(() => {
+      minimizeWindow(id);
+      setAnimPhase("idle");
+    }, 270);
+    return () => clearTimeout(t);
+  }, [id, win, minimizeWindow, computeMinimizeTxTy]);
+
+  /** Detect when store restores window (isMinimized: true → false) */
+  useLayoutEffect(() => {
+    const wasMinimized = prevMinimizedRef.current;
+    const isNowMinimized = win?.isMinimized ?? false;
+    prevMinimizedRef.current = isNowMinimized;
+
+    if (wasMinimized && !isNowMinimized) {
+      // Window just got restored — play expand animation
+      // At this point the dock button still exists (or we use stored tx/ty)
+      const { tx, ty } = computeMinimizeTxTy();
+      if (shellRef.current) {
+        shellRef.current.style.setProperty("--minimize-tx", `${tx}px`);
+        shellRef.current.style.setProperty("--minimize-ty", `${ty}px`);
+      }
+      setAnimPhase("restoring");
+      const t = setTimeout(() => setAnimPhase("idle"), 350);
+      return () => clearTimeout(t);
+    }
+  }, [win?.isMinimized, computeMinimizeTxTy]);
 
   // Sync CSS vars from store (only after pointerup Zustand write)
   useEffect(() => {
@@ -321,9 +390,15 @@ export function WindowNode({ id }: WindowNodeProps): React.ReactElement | null {
     // Outer shell: position only — NO animation (animation overrides transform)
     <div
       ref={shellRef}
-      className={`window${win.isMinimized ? " window--minimized" : ""}${
-        win.isMaximized ? " window--maximized" : ""
-      }${isFocused ? " window--focused" : ""}`}
+      className={[
+        "window",
+        // Only apply visibility:hidden when truly minimized AND not mid-animation
+        win.isMinimized && animPhase === "idle"  ? "window--minimized"  : "",
+        win.isMaximized                          ? "window--maximized"  : "",
+        isFocused && animPhase === "idle"        ? "window--focused"    : "",
+        animPhase === "minimizing"               ? "window--minimizing" : "",
+        animPhase === "restoring"                ? "window--restoring"  : "",
+      ].filter(Boolean).join(" ")}
       onPointerDown={handleShellPointerDown}
       style={{
         "--win-x": `${win.coordinates.x}px`,
@@ -350,6 +425,7 @@ export function WindowNode({ id }: WindowNodeProps): React.ReactElement | null {
           hasAgent={hasAgent}
           agentPanelOpen={agentPanelOpen}
           onToggleAgent={handleToggleAgent}
+          onMinimize={handleMinimize}
         />
 
         {/* App content + optional Agent chat panel */}

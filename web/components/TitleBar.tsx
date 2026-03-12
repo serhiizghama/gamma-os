@@ -11,6 +11,8 @@ interface TitleBarProps {
   agentPanelOpen?: boolean;
   /** called when ✨ is clicked (only when hasAgent) */
   onToggleAgent?: () => void;
+  /** override minimize behaviour (used by WindowNode for animation) */
+  onMinimize?: () => void;
 }
 
 export function TitleBar({
@@ -20,6 +22,7 @@ export function TitleBar({
   hasAgent: _hasAgent = false,
   agentPanelOpen = false,
   onToggleAgent,
+  onMinimize,
 }: TitleBarProps): React.ReactElement {
   const closeWindow = useOSStore((s) => s.closeWindow);
   const minimizeWindow = useOSStore((s) => s.minimizeWindow);
@@ -44,7 +47,11 @@ export function TitleBar({
           className="btn-minimize"
           onClick={(e) => {
             e.stopPropagation();
-            minimizeWindow(windowId);
+            if (onMinimize) {
+              onMinimize();
+            } else {
+              minimizeWindow(windowId);
+            }
           }}
           aria-label="Minimize"
         />

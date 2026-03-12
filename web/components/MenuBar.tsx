@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useOSStore } from "../store/useOSStore";
+import type { WindowNode } from "@gamma/types";
 
 export const MENU_HEIGHT = 32;
 
@@ -21,6 +22,99 @@ function GridIcon(): React.ReactElement {
       <rect x="2" y="10" width="4" height="4" rx="0.5" />
       <rect x="10" y="10" width="4" height="4" rx="0.5" />
     </svg>
+  );
+}
+
+// ── Minimized window chip (lives in MenuBar) ──────────────────────────────
+
+function MinimizedWindowChip({
+  win,
+  onRestore,
+}: {
+  win: WindowNode;
+  onRestore: () => void;
+}): React.ReactElement {
+  const [hovered, setHovered] = useState(false);
+
+  const abbr = win.title
+    .split(/\s+/)
+    .map((w) => w[0] ?? "")
+    .slice(0, 2)
+    .join("")
+    .toUpperCase() || "?";
+
+  return (
+    <button
+      id={`dock-btn-${win.id}`}
+      onClick={onRestore}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      title={`Restore "${win.title}"`}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 5,
+        height: 22,
+        padding: "0 8px",
+        borderRadius: 5,
+        border: `1px solid ${hovered ? "rgba(59,130,246,0.5)" : "rgba(255,255,255,0.1)"}`,
+        background: hovered
+          ? "rgba(37,99,235,0.25)"
+          : "rgba(255,255,255,0.06)",
+        color: hovered ? "rgba(147,197,253,1)" : "rgba(255,255,255,0.65)",
+        cursor: "pointer",
+        fontSize: 11,
+        fontWeight: 500,
+        fontFamily: "var(--font-system)",
+        letterSpacing: "0.02em",
+        transition: "background 140ms ease, border-color 140ms ease, color 140ms ease",
+        whiteSpace: "nowrap",
+        maxWidth: 120,
+        flexShrink: 0,
+        userSelect: "none",
+      }}
+    >
+      {/* tiny window icon */}
+      <span
+        style={{
+          fontSize: 9,
+          lineHeight: 1,
+          opacity: 0.75,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 13,
+          height: 10,
+          borderRadius: 2,
+          border: "1px solid currentColor",
+          flexShrink: 0,
+          position: "relative",
+        }}
+      >
+        <span
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 3,
+            background: "currentColor",
+            opacity: 0.5,
+            borderRadius: "1px 1px 0 0",
+          }}
+        />
+        {abbr[0]}
+      </span>
+      <span
+        style={{
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          maxWidth: 80,
+        }}
+      >
+        {win.title}
+      </span>
+    </button>
   );
 }
 
@@ -240,6 +334,10 @@ export function MenuBar({
 }: MenuBarProps): React.ReactElement {
   const architectOpen = useOSStore((s) => s.architectOpen);
   const launchpadOpen = useOSStore((s) => s.launchpadOpen);
+  const focusWindow   = useOSStore((s) => s.focusWindow);
+  const minimizedWindows = useOSStore((s) =>
+    Object.values(s.windows).filter((w) => w.isMinimized)
+  );
 
   return (
     <div
@@ -265,7 +363,7 @@ export function MenuBar({
         userSelect: "none",
       }}
     >
-      {/* ── Left: Brand ─────────────────────────────────────── */}
+      {/* ── Left: Brand + minimized window chips ────────────── */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
         {/* Gamma γ glyph */}
         <svg
@@ -295,6 +393,38 @@ export function MenuBar({
           Gamma OS
         </span>
       </div>
+
+      {/* ── Minimized window chips ───────────────────────────── */}
+      {minimizedWindows.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            flexShrink: 0,
+            maxWidth: "40vw",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              width: 1,
+              height: 14,
+              background: "var(--color-border-subtle)",
+              flexShrink: 0,
+              borderRadius: 1,
+              marginRight: 2,
+            }}
+          />
+          {minimizedWindows.map((win) => (
+            <MinimizedWindowChip
+              key={win.id}
+              win={win}
+              onRestore={() => focusWindow(win.id)}
+            />
+          ))}
+        </div>
+      )}
 
       {/* ── Center: Active window title (animated) ───────────── */}
       <ActiveWindowTitle />
