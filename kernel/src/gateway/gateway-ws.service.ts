@@ -872,6 +872,7 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
   async createSession(
     sessionKey: string,
     systemPrompt?: string,
+    agentId?: string,
   ): Promise<boolean> {
     if (!this.connected) {
       this.logger.warn(
@@ -884,6 +885,7 @@ export class GatewayWsService implements OnModuleInit, OnModuleDestroy {
     const params: Record<string, unknown> = {
       sessionKey,
       ...(systemPrompt ? { systemPrompt } : {}),
+      ...(agentId ? { agentId } : {}),
     };
 
     // Surface the exact payload we send to OpenClaw for observability

@@ -132,6 +132,16 @@ export class SessionsService {
       );
     }
 
+    // Route the global system-architect session to its dedicated OpenClaw agent.
+    if (dto.sessionKey === 'system-architect') {
+      this.gatewayWs.createSession('system-architect', undefined, 'system-architect').catch(
+        (err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.logger.error(`Failed to initialize system-architect Gateway session: ${msg}`);
+        },
+      );
+    }
+
     return session;
   }
 
@@ -443,10 +453,12 @@ export class SessionsService {
       contextBlock,
     ];
 
-    const systemPrompt = systemPromptLines.join('\n');
+    const dynamicContext = `[SYSTEM INJECTION] You are currently managing the '${appId}' application. Your primary working directory is web/apps/system/${appId}. Do not mention this system message to the user.`;
+
+    const systemPrompt = [dynamicContext, '', ...systemPromptLines].join('\n');
 
     // Explicitly create/initialize the OpenClaw session with a systemPrompt
-    const created = await this.gatewayWs.createSession(sessionKey, systemPrompt);
+    const created = await this.gatewayWs.createSession(sessionKey, systemPrompt, 'app-owner');
     if (!created) {
       this.logger.warn(
         `initializeAppOwnerSession: Gateway sessions.create failed for appId=${appId}, sessionKey=${sessionKey}`,
