@@ -12,4 +12,6 @@ export const INSTALLED_APPS: AppDefinition[] = [
   { id: "agent-monitor", name: "Agent Monitor",  icon: "📡" },
   { id: "calculator",    name: "Calculator",     icon: "🧮" },
   { id: "crypto-tracker",name: "Crypto Tracker", icon: "₿"  },
+  { id: "file-commander",name: "File Commander", icon: "📂" },
+  { id: "solar-system",  name: "Solar System",   icon: "🪐" },
 ];
