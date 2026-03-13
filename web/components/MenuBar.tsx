@@ -343,6 +343,7 @@ export function MenuBar({
   const [aboutOpen, setAboutOpen] = useState(false);
 
   return (
+    <>
     <div
       className="desktop-shell__taskbar"
       style={{
@@ -448,12 +449,8 @@ export function MenuBar({
         </div>
       )}
 
-      {/* ── Center: Active window title (animated) ───────────── */}
-      <ActiveWindowTitle />
-
       {/* ── Right: Tray ─────────────────────────────────────── */}
       <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-        <Clock />
         <Sep />
         <TrayButton
           onClick={onOpenLaunchpad}
@@ -476,5 +473,6 @@ export function MenuBar({
 
     {/* About Gamma OS modal */}
     {aboutOpen && <AboutModal onClose={() => setAboutOpen(false)} />}
+    </>
   );
 }
