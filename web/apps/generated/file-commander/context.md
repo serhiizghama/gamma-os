@@ -1,0 +1,1 @@
+Two-panel orthodox file manager for Gamma OS. Browse, copy, move, delete, and view files on the real filesystem.
