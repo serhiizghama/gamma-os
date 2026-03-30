@@ -387,6 +387,7 @@ export function MenuBar({
           onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.08)"; }}
           onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
         >
+          <span style={{ fontSize: 15, lineHeight: 1, flexShrink: 0 }}>💻</span>
           <svg
             viewBox="0 0 20 24"
             width="14"
